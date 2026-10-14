@@ -38,6 +38,15 @@ cargo run
 curl localhost:8080/healthz
 ```
 
+## Dokumentasi API
+
+Kontrak API v1.0.0 (OpenAPI 3.1) ada di [`docs/api/openapi.yaml`](docs/api/openapi.yaml) dan dirender dengan Scalar.
+
+- Online (GitHub Pages): https://coding-skuy.github.io/lumbung-backend-service/api/
+- Lokal: `bun x serve docs/api` lalu buka alamat yang tertera.
+- Validasi: `bun x @redocly/cli@latest lint docs/api/openapi.yaml`
+- Autentikasi mengikuti [`docs/auth.md`](docs/auth.md); perubahan kontrak wajib ADR baru + bump versi.
+
 ### Keterkaitan
 
 - Platform: [Lumbung-TownHall](https://github.com/Coding-Skuy/Lumbung-TownHall)

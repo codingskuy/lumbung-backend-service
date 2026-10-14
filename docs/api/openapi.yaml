@@ -1,0 +1,1900 @@
+openapi: 3.1.0
+info:
+  title: API Lumbung — ChefGenie
+  version: 1.0.0
+  summary: Kontrak API Lumbung-Backend v1.0.0 (agregasi, distribusi, fee per kg).
+  description: |
+    Kontrak API layanan `lumbung-backend-service` untuk divisi Lumbung (agregasi panen petani,
+    sortir Grade A/B/C, trip antar, fee logistik per kg, papan harga mingguan).
+
+    Sumber kebenaran: `platform/versions/v1.0.0/FSD/30-kontrak.md` dan
+    `produk/30..32-kontrak-api-*.md` di Lumbung-TownHall; autentikasi mengikuti `docs/auth.md`
+    repo ini.
+
+    **Aturan angka**
+    - Berat selalu **gram integer** (web menerima kg desimal dari pengguna lalu server SvelteKit
+      mengonversi ke gram sebelum memanggil API ini).
+    - Uang selalu **rupiah integer**.
+    - Komoditas pilot v1.0.0: `cabai`, `bawang`, `kangkung`.
+    - Fee: Zona `DEKAT` (<15 km) Rp1.500/kg, Zona `JAUH` (15-25 km) Rp2.500/kg.
+
+    **Idempotensi.** Semua `POST` membawa `uuid` klien. Pengiriman ulang dengan `uuid` sama
+    mengembalikan `200` dengan `duplikat: true` tanpa rekaman ganda.
+
+    **Batas laju.** Maksimal 60 request per menit per perangkat (`429`).
+
+    **Klien tidak menghitung fee, grade, atau papan harga**; semua angka resmi dari server.
+  contact:
+    name: Tech Lead Lumbung
+    url: https://github.com/Coding-Skuy/Lumbung-TownHall
+  license:
+    name: GNU AGPL v3.0 (lihat LICENSE repo)
+    identifier: AGPL-3.0-only
+servers:
+  - url: https://api.lumbung.chefgenie.id/v1
+    description: Produksi
+  - url: http://localhost:8080
+    description: Lokal (cargo run)
+tags:
+  - name: Sistem
+    description: Kesehatan layanan.
+  - name: Auth
+    description: JWT akses 15 menit, refresh 7 hari (reuse-detection), login shift gudang.
+  - name: Sopir
+    description: Endpoint mobile sopir (5 endpoint, termasuk unggah foto).
+  - name: Petani
+    description: Endpoint mobile petani (4 endpoint, difilter server per id petani).
+  - name: Gudang
+    description: Endpoint desktop Windows gudang (7 endpoint).
+  - name: Publik
+    description: Web publik tanpa login, cache 15 menit (2 endpoint).
+  - name: Admin
+    description: Web admin dengan sesi peran (4 baca + 3 tulis beraudit).
+security:
+  - bearerAuth: []
+paths:
+  /kesehatan:
+    get:
+      tags: [Sistem]
+      operationId: kesehatan
+      summary: Cek kesehatan layanan
+      description: Mengembalikan status ok dan waktu server.
+      security: []
+      responses:
+        '200':
+          description: Layanan sehat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Kesehatan'
+              example:
+                status: ok
+                waktu_server: '2026-10-04T10:00:00+07:00'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /auth/masuk:
+    post:
+      tags: [Auth]
+      operationId: authMasuk
+      summary: Masuk pengguna (akun peran + PIN)
+      description: |
+        Akun peran (contoh `sopir-02`, `PTN-007`) + PIN 6 digit. Tiga kali salah PIN mengunci akun
+        15 menit. Mengembalikan JWT akses 15 menit (ed25519, audiens `lumbung`) dan refresh 7 hari.
+        Tidak ada login hanya dengan nama; 1 orang 1 akun.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MasukRequest'
+            example:
+              akun: sopir-02
+              pin: '123456'
+      responses:
+        '200':
+          description: Token diterbitkan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: authRefresh
+      summary: Perbarui token akses
+      description: |
+        Menukar refresh token (7 hari) dengan JWT akses baru dan refresh baru (rotasi). Bila refresh
+        token lama dipakai dua kali (reuse-detection), seluruh keluarga refresh pengguna dicabut dan
+        pengguna wajib masuk ulang (`401`). Klien mobile me-refresh otomatis 1 kali lalu meminta login ulang.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token baru.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /auth/keluar:
+    post:
+      tags: [Auth]
+      operationId: authKeluar
+      summary: Keluar (cabut keluarga refresh)
+      description: Menghapus keluarga refresh dari basis data; token akses kedaluwarsa sendiri dalam 15 menit.
+      responses:
+        '204':
+          description: Berhasil keluar.
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /gudang/masuk:
+    post:
+      tags: [Auth, Gudang]
+      operationId: gudangMasuk
+      summary: Login shift gudang
+      description: |
+        Kredensial perangkat gudang terdaftar (`X-Device-Key`) + PIN operator per shift (contoh
+        `OPR-SORTIR-1`). Mengembalikan token shift berumur 12 jam. Token shift tidak boleh keluar dari
+        PC gudang. Tiga salah PIN mengunci 15 menit dan memberi tahu Kepala Agregasi.
+      security:
+        - deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GudangMasukRequest'
+            example:
+              operator: OPR-SORTIR-1
+              pin: '123456'
+      responses:
+        '200':
+          description: Token shift diterbitkan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenShiftResponse'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /gudang/keluar:
+    post:
+      tags: [Gudang]
+      operationId: gudangKeluar
+      summary: Tutup shift gudang
+      description: Wajib dipanggil tiap tutup shift 14.00; mencabut token shift.
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      responses:
+        '204':
+          description: Shift ditutup.
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /trip-hari-ini:
+    get:
+      tags: [Sopir]
+      operationId: tripHariIni
+      summary: Daftar trip hari ini beserta titik berurutan
+      description: Sopir hanya melihat tripnya hari itu. SLA p95 <800 ms pada koneksi 3G.
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      responses:
+        '200':
+          description: Daftar trip.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Trip'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /titik/{id}/tiba:
+    post:
+      tags: [Sopir]
+      operationId: titikTiba
+      summary: Catat tiba di titik
+      parameters:
+        - $ref: '#/components/parameters/TitikId'
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TitikTibaRequest'
+            example:
+              uuid: 0f8a6c3e-5b2d-4c1a-9e47-3a1d2b6c7f90
+              trip_id: TRIP-UT-041
+              titik_id: PWN-1
+              waktu: '2026-10-10T07:15:00+07:00'
+              lat: -7.79
+              lng: 110.36
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          $ref: '#/components/responses/AksiDibuat'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /titik/{id}/berangkat:
+    post:
+      tags: [Sopir]
+      operationId: titikBerangkat
+      summary: Catat berangkat dari titik
+      parameters:
+        - $ref: '#/components/parameters/TitikId'
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TitikTibaRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          $ref: '#/components/responses/AksiDibuat'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /bukti-terima:
+    post:
+      tags: [Sopir]
+      operationId: buktiTerima
+      summary: Kirim bukti terima (metadata JSON)
+      description: |
+        Metadata + UUID; foto diunggah terpisah lewat `POST /unggah-foto` (maksimal 4 foto per bukti,
+        masing-masing JPEG maksimal 500 KB). Resolusi konflik: lapangan menang untuk bukti terima dan posisi.
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuktiTerimaRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          $ref: '#/components/responses/AksiDibuat'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /unggah-foto:
+    post:
+      tags: [Sopir]
+      operationId: unggahFoto
+      summary: Unggah foto bukti (JPEG maks 500 KB)
+      description: Dipisah dari JSON agar hemat kuota. Foto disimpan 1 tahun lalu hanya metadata.
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [uuid, berkas]
+              properties:
+                uuid:
+                  type: string
+                  format: uuid
+                  description: UUID klien (idempotensi).
+                berkas:
+                  type: string
+                  contentMediaType: image/jpeg
+                  description: Berkas JPEG maksimal 500 KB.
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          description: Foto tersimpan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [foto_id, duplikat]
+                properties:
+                  foto_id:
+                    type: string
+                    format: uuid
+                  duplikat:
+                    type: boolean
+                    const: false
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /insiden:
+    post:
+      tags: [Sopir]
+      operationId: buatInsiden
+      summary: Laporkan insiden (keterlambatan, konflik, dll.)
+      description: ID insiden berformat `INS-YYYYMMDD-NNN`. Foto opsional.
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InsidenRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          $ref: '#/components/responses/AksiDibuat'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /kontrak-saya:
+    get:
+      tags: [Petani]
+      operationId: kontrakSaya
+      summary: Kontrak musim 90 hari milik petani
+      description: Komitmen vs realisasi kg musim berjalan. Difilter server per id petani.
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      responses:
+        '200':
+          description: Kontrak petani.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KontrakSaya'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /rencana-setoran:
+    post:
+      tags: [Petani]
+      operationId: rencanaSetoran
+      summary: Ajukan rencana setoran
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RencanaSetoranRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          $ref: '#/components/responses/AksiDibuat'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /pembayaran-saya:
+    get:
+      tags: [Petani]
+      operationId: pembayaranSaya
+      summary: Riwayat pembayaran H+1 petani
+      description: Pembayaran dihitung dari berat bersih per grade x harga papan minggu berjalan; target ketepatan minimal 95% lot per minggu.
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      responses:
+        '200':
+          description: Riwayat pembayaran.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pembayaran'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /papan-harga:
+    get:
+      tags: [Petani]
+      operationId: papanHargaPetani
+      summary: Papan harga minggu berjalan (baca saja)
+      description: Petani tidak dapat mengubah harga.
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      responses:
+        '200':
+          description: Papan harga.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PapanHarga'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /lot:
+    post:
+      tags: [Gudang]
+      operationId: buatLot
+      summary: Buat lot + timbang kotor
+      description: |
+        Server menerbitkan kode lot resmi `L-NNNN`; saat offline klien memakai nomor sementara
+        `TMP-{uuid8}` yang dipetakan ke nomor resmi saat sinkron.
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuatLotRequest'
+            example:
+              uuid: 6b0d8a4e-1c2f-4d5a-8e91-2f3a4b5c6d7e
+              kode_petani: PTN-007
+              komoditas: cabai
+              tanggal: '2026-10-06'
+              berat_kotor_g: 120000
+              petugas: OPR-SORTIR-1
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          description: Lot dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lot'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /lot/{id}/sortir:
+    post:
+      tags: [Gudang]
+      operationId: sortirLot
+      summary: Catat hasil sortir A/B/C
+      description: |
+        Berat dalam gram integer. Server menolak (`422`) bila total A+B+C menyimpang dari berat
+        kotor lebih dari 2 persen. Grade C tidak masuk rantai dingin dan dicatat alihnya.
+        Gudang menang untuk berat dan grade saat konflik.
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/LotId'
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SortirRequest'
+            example:
+              uuid: 3c9d2e1f-7a4b-4c58-9d06-1e2f3a4b5c6d
+              lot_id: L-8812
+              grade_a_g: 100000
+              grade_b_g: 14000
+              grade_c_g: 6000
+              petugas: OPR-SORTIR-1
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          description: Sortir tercatat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lot'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /keranjang/batch:
+    post:
+      tags: [Gudang]
+      operationId: keranjangBatch
+      summary: Catat keranjang dalam batch (maks 50 per request)
+      description: Contoh 25 keranjang x 20 kg = 500 kg. Keranjang berkode permanen `KRJ-001` sampai `KRJ-120`.
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KeranjangBatchRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          $ref: '#/components/responses/AksiDibuat'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /trip:
+    post:
+      tags: [Gudang]
+      operationId: buatTrip
+      summary: Susun trip
+      description: Kode trip `TRIP-RUTE-NNN` (contoh `TRIP-UT-041`); kas jalan Rp300.000 per trip.
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuatTripRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          description: Trip dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /trip/{id}/surat-jalan:
+    post:
+      tags: [Gudang]
+      operationId: terbitSuratJalan
+      summary: Terbitkan surat jalan
+      description: Server menerbitkan nomor unik `SJ-YYYYMMDD-NNN`; nomor sementara `TMP-*` dipetakan otomatis dan cetak ulang tersedia bila nomor berubah.
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Kode trip.
+          schema:
+            type: string
+            examples: [TRIP-UT-041]
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uuid]
+              properties:
+                uuid:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/AksiDuplikat'
+        '201':
+          description: Surat jalan terbit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuratJalan'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /stok-lot:
+    get:
+      tags: [Gudang]
+      operationId: stokLot
+      summary: Sisa lot per grade untuk alokasi pesanan
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      responses:
+        '200':
+          description: Stok lot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StokLot'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /sinkron/batch:
+    post:
+      tags: [Gudang]
+      operationId: sinkronBatch
+      summary: Catch-up setelah offline (maks 200 rekaman, FIFO)
+      description: |
+        Rekaman diproses berurutan FIFO. Nomor sementara `TMP-*` dipetakan ke nomor resmi pada respons.
+        Batch 25 keranjang (<100 KB) tersinkron <30 detik pada 1 Mbps. Offline lebih dari 3x24 jam
+        mengunci penerbitan surat jalan baru (timbang dan bukti tetap diizinkan).
+      security:
+        - bearerAuth: []
+          deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/PerangkatId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SinkronBatchRequest'
+      responses:
+        '200':
+          description: Hasil sinkron per rekaman.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SinkronBatchResponse'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /publik/papan-harga:
+    get:
+      tags: [Publik]
+      operationId: publikPapanHarga
+      summary: Papan harga publik minggu berjalan
+      description: Tanpa login; boleh di-cache CDN 15 menit. Berlaku Senin-Minggu; dihitung Jumat 15.00, publikasi maksimal 17.00.
+      security: []
+      responses:
+        '200':
+          description: Papan harga.
+          headers:
+            Cache-Control:
+              description: Cache 15 menit.
+              schema:
+                type: string
+                examples: ['public, max-age=900']
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PapanHarga'
+              example:
+                cabai: {a: 31500, b: 26500}
+                bawang: {a: 28000, b: 23500}
+                kangkung: {a: 6000, b: 5000}
+                fee: {dekat: 1500, jauh: 2500}
+                berlaku: '2026-10-06 s.d. 2026-10-12'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /publik/profil:
+    get:
+      tags: [Publik]
+      operationId: publikProfil
+      summary: Profil Lumbung dan kontak kemitraan
+      description: Tanpa login; cache 15 menit.
+      security: []
+      responses:
+        '200':
+          description: Profil.
+          headers:
+            Cache-Control:
+              description: Cache 15 menit.
+              schema:
+                type: string
+                examples: ['public, max-age=900']
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profil'
+        '429':
+          $ref: '#/components/responses/BatasLaju'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /admin/rekap-harian:
+    get:
+      tags: [Admin]
+      operationId: adminRekapHarian
+      summary: Rekap harian
+      description: Kg masuk per komoditas, fee tertagih, susut persen.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      parameters:
+        - name: tanggal
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            examples: ['2026-10-10']
+      responses:
+        '200':
+          description: Rekap harian.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RekapHarian'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /admin/invoice:
+    get:
+      tags: [Admin]
+      operationId: adminInvoice
+      summary: Daftar invoice fee mingguan
+      description: Invoice terbit tiap Senin untuk surat jalan minggu sebelumnya; jatuh tempo 7 hari; denda 1 persen per minggu maksimal 4 persen.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      parameters:
+        - name: minggu
+          in: query
+          required: true
+          description: Minggu ISO.
+          schema:
+            type: string
+            pattern: '^\d{4}-W\d{2}$'
+            examples: ['2026-W41']
+      responses:
+        '200':
+          description: Daftar invoice.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invoice'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /admin/mitra:
+    get:
+      tags: [Admin]
+      operationId: adminMitra
+      summary: Daftar mitra petani dan status kontrak
+      description: Target pilot 40 petani.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      responses:
+        '200':
+          description: Daftar mitra.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Mitra'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /admin/insiden:
+    get:
+      tags: [Admin]
+      operationId: adminInsiden
+      summary: Log insiden (keterlambatan, konflik sinkron)
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      responses:
+        '200':
+          description: Daftar insiden.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Insiden'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /admin/papan-harga:
+    post:
+      tags: [Admin]
+      operationId: adminTerbitPapanHarga
+      summary: Terbitkan papan harga Jumat 15.00
+      description: |
+        3 komoditas x 2 grade + 2 zona fee. Formula: median 3 harga referensi dikurangi 10 persen buffer,
+        dibulatkan ke bawah kelipatan Rp500 (dihitung server). Beraudit nama + waktu; mengembalikan `audit_id`.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerbitPapanRequest'
+      responses:
+        '201':
+          description: Papan diterbitkan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditHasil'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /admin/invoice/{id}/lunas:
+    post:
+      tags: [Admin]
+      operationId: adminInvoiceLunas
+      summary: Tandai invoice lunas
+      description: Beraudit; mengembalikan `audit_id`.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID invoice.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Invoice lunas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditHasil'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+  /admin/mitra/{id}/status:
+    post:
+      tags: [Admin]
+      operationId: adminMitraStatus
+      summary: Aktifkan atau nonaktifkan kontrak mitra
+      description: Beraudit; mengembalikan `audit_id`.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Kode petani.
+          schema:
+            type: string
+            examples: [PTN-007]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [AKTIF, NONAKTIF]
+      responses:
+        '200':
+          description: Status diubah.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditHasil'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT akses 15 menit, ditandatangani ed25519, audiens `lumbung`. Untuk gudang desktop berupa
+        token shift 12 jam dari `POST /gudang/masuk`. Refresh 7 hari dengan reuse-detection (lihat `docs/auth.md`).
+    deviceKey:
+      type: apiKey
+      in: header
+      name: X-Device-Key
+      description: |
+        API key perangkat gudang terdaftar (`DEVICE_API_KEY_GUDANG`). Hak minimal; tidak boleh membaca
+        data pengguna. Rotasi 90 hari, kunci lama diberi tenggang 7 hari. Lihat `docs/auth.md`.
+    serviceKey:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+      description: |
+        Kunci server-ke-server (`SERVICE_API_KEY`; web SvelteKit menyimpannya di variabel lingkungan
+        server `LUMBUNG_API_KEY`, rotasi 90 hari, tidak pernah dikirim ke browser). Hak minimal (least privilege).
+  parameters:
+    PerangkatId:
+      name: X-Perangkat-Id
+      in: header
+      required: false
+      description: ID perangkat terdaftar (maksimal 2 perangkat per petani, 1 per sopir, PC gudang permanen).
+      schema:
+        type: string
+    TitikId:
+      name: id
+      in: path
+      required: true
+      description: Kode titik trip.
+      schema:
+        type: string
+        examples: [PWN-1]
+    LotId:
+      name: id
+      in: path
+      required: true
+      description: Kode lot `L-NNNN` atau nomor sementara `TMP-{uuid8}`.
+      schema:
+        type: string
+        pattern: '^(L-\d{4,}|TMP-[0-9a-f]{8})$'
+        examples: [L-8812]
+  responses:
+    AksiDibuat:
+      description: Rekaman dibuat.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AksiHasil'
+    AksiDuplikat:
+      description: 'UUID klien sudah pernah diproses; hasil pertama dikembalikan tanpa rekaman ganda (duplikat: true).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AksiHasil'
+          example:
+            id: 0f8a6c3e-5b2d-4c1a-9e47-3a1d2b6c7f90
+            duplikat: true
+    Validasi:
+      description: Validasi gagal (kode galat 422), contoh berat negatif atau total sortir di luar 2 persen. Galat internal AppError::Validation bernilai 400 untuk input tak terbaca.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: 'validasi gagal: total sortir menyimpang lebih dari 2 persen dari berat kotor'
+    TidakSah:
+      description: Token kedaluwarsa atau tidak sah (401). Klien mobile me-refresh 1 kali lalu meminta login ulang.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: tidak sah
+    Ditolak:
+      description: Peran ditolak dan dicatat (403), contoh sopir memanggil endpoint admin.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: akses ditolak
+    TidakDitemukan:
+      description: Data tidak ditemukan (404).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: tidak ditemukan
+    Konflik:
+      description: Konflik versi (409); klien menampilkan "data gudang lebih baru".
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: konflik versi, data gudang lebih baru
+    BatasLaju:
+      description: Melebihi 60 request per menit per perangkat (429).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: batas laju terlampaui
+    GalatServer:
+      description: Galat basis data atau internal (500).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: galat internal
+  schemas:
+    Galat:
+      type: object
+      description: Badan galat baku `AppError`. Pemetaan status - 400 validasi input, 401 tidak sah, 403 ditolak, 404 tidak ditemukan, 409 konflik versi, 422 validasi domain, 429 batas laju, 500 basis data/internal.
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Pesan galat.
+    Rupiah:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Uang dalam rupiah integer.
+    Gram:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Berat dalam gram integer.
+    Komoditas:
+      type: string
+      enum: [cabai, bawang, kangkung]
+      description: 3 komoditas pilot v1.0.0.
+    Grade:
+      type: string
+      enum: [A, B, C]
+    Zona:
+      type: string
+      enum: [DEKAT, JAUH]
+      description: DEKAT (<15 km) Rp1.500/kg; JAUH (15-25 km) Rp2.500/kg.
+    UuidKlien:
+      type: string
+      format: uuid
+      description: UUID klien untuk idempotensi.
+    AksiHasil:
+      type: object
+      required: [id, duplikat]
+      properties:
+        id:
+          type: string
+          description: ID rekaman hasil.
+        duplikat:
+          type: boolean
+          description: true bila UUID sama sudah pernah diproses.
+    Kesehatan:
+      type: object
+      required: [status, waktu_server]
+      properties:
+        status:
+          type: string
+          examples: [ok]
+        waktu_server:
+          type: string
+          format: date-time
+    MasukRequest:
+      type: object
+      required: [akun, pin]
+      properties:
+        akun:
+          type: string
+          description: Akun peran, contoh `sopir-02` atau `PTN-007`.
+        pin:
+          type: string
+          pattern: '^\d{6}$'
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+    TokenResponse:
+      type: object
+      required: [token, refresh_token, berlaku_sampai, peran]
+      properties:
+        token:
+          type: string
+          description: JWT akses 15 menit.
+        refresh_token:
+          type: string
+          description: Refresh 7 hari (hash disimpan di basis data).
+        berlaku_sampai:
+          type: string
+          format: date-time
+        peran:
+          type: string
+          enum: [petani, sopir, admin_gudang, admin_keuangan, koordinator_tani]
+        trip_hari_ini:
+          type: array
+          description: Hanya untuk peran sopir.
+          items:
+            type: string
+            examples: [TRIP-UT-041]
+    GudangMasukRequest:
+      type: object
+      required: [operator, pin]
+      properties:
+        operator:
+          type: string
+          examples: [OPR-SORTIR-1]
+        pin:
+          type: string
+          pattern: '^\d{6}$'
+    TokenShiftResponse:
+      type: object
+      required: [token, berlaku_sampai]
+      properties:
+        token:
+          type: string
+          description: Token shift 12 jam; tidak boleh keluar dari PC gudang.
+        berlaku_sampai:
+          type: string
+          format: date-time
+    TitikTibaRequest:
+      type: object
+      required: [uuid, trip_id, titik_id, waktu]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        trip_id:
+          type: string
+          examples: [TRIP-UT-041]
+        titik_id:
+          type: string
+          examples: [PWN-1]
+        waktu:
+          type: string
+          format: date-time
+        lat:
+          type: number
+        lng:
+          type: number
+    BuktiTerimaRequest:
+      type: object
+      required: [uuid, trip_id, titik_id, waktu, foto_ids]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        trip_id:
+          type: string
+        titik_id:
+          type: string
+        waktu:
+          type: string
+          format: date-time
+        foto_ids:
+          type: array
+          description: ID foto hasil `POST /unggah-foto`, maksimal 4.
+          maxItems: 4
+          items:
+            type: string
+            format: uuid
+        tanda_tangan:
+          type: string
+          description: ID berkas tanda tangan penerima (opsional).
+        catatan:
+          type: string
+    InsidenRequest:
+      type: object
+      required: [uuid, jenis]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        jenis:
+          type: string
+          description: Jenis insiden, contoh keterlambatan.
+        catatan:
+          type: string
+        foto_ids:
+          type: array
+          maxItems: 4
+          items:
+            type: string
+            format: uuid
+    Insiden:
+      type: object
+      required: [id, jenis, waktu]
+      properties:
+        id:
+          type: string
+          pattern: '^INS-\d{8}-\d{3}$'
+          examples: [INS-20261010-001]
+        jenis:
+          type: string
+        catatan:
+          type: string
+        waktu:
+          type: string
+          format: date-time
+    Titik:
+      type: object
+      required: [id, urutan]
+      properties:
+        id:
+          type: string
+          examples: [PWN-1]
+        urutan:
+          type: integer
+          minimum: 1
+        zona:
+          $ref: '#/components/schemas/Zona'
+        tiba_pada:
+          type: [string, 'null']
+          format: date-time
+        berangkat_pada:
+          type: [string, 'null']
+          format: date-time
+    Trip:
+      type: object
+      required: [kode, rute, status]
+      properties:
+        kode:
+          type: string
+          pattern: '^TRIP-[A-Z]{2}-\d{3}$'
+          examples: [TRIP-UT-041]
+        rute:
+          type: string
+          enum: [UTARA, SELATAN, KOTA]
+        kendaraan:
+          type: string
+        kas_jalan:
+          $ref: '#/components/schemas/Rupiah'
+          description: Kas jalan Rp300.000 per trip.
+        status:
+          type: string
+          enum: [DISUSUN, BERJALAN, SELESAI]
+        titik:
+          type: array
+          items:
+            $ref: '#/components/schemas/Titik'
+    BuatTripRequest:
+      type: object
+      required: [uuid, rute, kendaraan, keranjang]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        rute:
+          type: string
+          enum: [UTARA, SELATAN, KOTA]
+        kendaraan:
+          type: string
+        kas_jalan:
+          $ref: '#/components/schemas/Rupiah'
+        keranjang:
+          type: array
+          description: Kode keranjang yang dimuat.
+          items:
+            type: string
+            pattern: '^KRJ-\d{3}$'
+    SuratJalan:
+      type: object
+      required: [nomor, trip, keranjang]
+      properties:
+        nomor:
+          type: string
+          pattern: '^SJ-\d{8}-\d{3}$'
+          examples: [SJ-20261010-001]
+        trip:
+          type: string
+        keranjang:
+          type: array
+          items:
+            type: object
+            required: [kode, grade, berat_g]
+            properties:
+              kode:
+                type: string
+              grade:
+                $ref: '#/components/schemas/Grade'
+              berat_g:
+                $ref: '#/components/schemas/Gram'
+        fee_total:
+          $ref: '#/components/schemas/Rupiah'
+        rincian_fee:
+          type: array
+          items:
+            $ref: '#/components/schemas/Fee'
+        nomor_sementara:
+          type: [string, 'null']
+          description: Nomor `TMP-*` yang dipetakan (bila ada); cetak ulang tersedia bila nomor berubah.
+    BuatLotRequest:
+      type: object
+      required: [uuid, kode_petani, komoditas, tanggal, berat_kotor_g]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        kode_petani:
+          type: string
+          pattern: '^PTN-\d{3}$'
+        komoditas:
+          $ref: '#/components/schemas/Komoditas'
+        tanggal:
+          type: string
+          format: date
+        berat_kotor_g:
+          $ref: '#/components/schemas/Gram'
+        petugas:
+          type: string
+    Lot:
+      type: object
+      required: [kode, komoditas, status, berat_kotor_g, versi]
+      properties:
+        kode:
+          type: string
+          description: Kode resmi `L-NNNN` atau sementara `TMP-{uuid8}`.
+          examples: [L-8812]
+        kode_petani:
+          type: string
+        komoditas:
+          $ref: '#/components/schemas/Komoditas'
+        status:
+          type: string
+          enum: [BARU, DISORTIR, DIMUAT, DITERIMA]
+        berat_kotor_g:
+          $ref: '#/components/schemas/Gram'
+        grade_a_g:
+          $ref: '#/components/schemas/Gram'
+        grade_b_g:
+          $ref: '#/components/schemas/Gram'
+        grade_c_g:
+          $ref: '#/components/schemas/Gram'
+        versi:
+          type: integer
+          minimum: 1
+          description: Versi rekaman untuk resolusi konflik (mulai 1).
+        dibuat_pada:
+          type: string
+          format: date-time
+        dibuat_oleh:
+          type: string
+        duplikat:
+          type: boolean
+    SortirRequest:
+      type: object
+      required: [uuid, lot_id, grade_a_g, grade_b_g, grade_c_g]
+      description: Total A+B+C wajib sama dengan berat kotor dalam toleransi 2 persen, jika tidak 422.
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        lot_id:
+          type: string
+        grade_a_g:
+          $ref: '#/components/schemas/Gram'
+        grade_b_g:
+          $ref: '#/components/schemas/Gram'
+        grade_c_g:
+          $ref: '#/components/schemas/Gram'
+        petugas:
+          type: string
+    KeranjangItem:
+      type: object
+      required: [kode, lot_id, grade, berat_g]
+      properties:
+        kode:
+          type: string
+          pattern: '^KRJ-\d{3}$'
+        lot_id:
+          type: string
+        grade:
+          $ref: '#/components/schemas/Grade'
+        berat_g:
+          $ref: '#/components/schemas/Gram'
+    KeranjangBatchRequest:
+      type: object
+      required: [uuid, keranjang]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        keranjang:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/KeranjangItem'
+    StokLot:
+      type: object
+      required: [lot_id, komoditas, grade, sisa_g]
+      properties:
+        lot_id:
+          type: string
+        komoditas:
+          $ref: '#/components/schemas/Komoditas'
+        grade:
+          $ref: '#/components/schemas/Grade'
+        sisa_g:
+          $ref: '#/components/schemas/Gram'
+    SinkronRekaman:
+      type: object
+      required: [uuid, jenis, payload]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        jenis:
+          type: string
+          enum: [lot, sortir, keranjang, trip, surat_jalan, bukti_terima, insiden]
+        nomor_sementara:
+          type: string
+          pattern: '^TMP-[0-9a-f]{8}$'
+        payload:
+          type: object
+          description: Badan request endpoint asal sesuai jenis.
+          additionalProperties: true
+        dibuat_pada:
+          type: string
+          format: date-time
+    SinkronBatchRequest:
+      type: object
+      required: [rekaman]
+      properties:
+        rekaman:
+          type: array
+          description: Maksimal 200 rekaman, urut FIFO.
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/SinkronRekaman'
+    SinkronBatchResponse:
+      type: object
+      required: [hasil]
+      properties:
+        hasil:
+          type: array
+          items:
+            type: object
+            required: [uuid, status]
+            properties:
+              uuid:
+                $ref: '#/components/schemas/UuidKlien'
+              status:
+                type: string
+                enum: [DITERIMA, DUPLIKAT, KONFLIK, DITOLAK]
+              nomor_resmi:
+                type: [string, 'null']
+                description: Nomor resmi (`L-NNNN`, `SJ-YYYYMMDD-NNN`) yang memetakan nomor `TMP-*`.
+              pesan:
+                type: [string, 'null']
+    KontrakSaya:
+      type: object
+      required: [petani, musim_mulai, musim_selesai, komitmen]
+      properties:
+        petani:
+          type: string
+          pattern: '^PTN-\d{3}$'
+        musim_mulai:
+          type: string
+          format: date
+        musim_selesai:
+          type: string
+          format: date
+          description: Kontrak mini musim 90 hari.
+        komitmen:
+          type: array
+          items:
+            type: object
+            required: [komoditas, komitmen_g, realisasi_g]
+            properties:
+              komoditas:
+                $ref: '#/components/schemas/Komoditas'
+              komitmen_g:
+                $ref: '#/components/schemas/Gram'
+              realisasi_g:
+                $ref: '#/components/schemas/Gram'
+    RencanaSetoranRequest:
+      type: object
+      required: [uuid, komoditas, estimasi_g, tanggal]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        komoditas:
+          $ref: '#/components/schemas/Komoditas'
+        estimasi_g:
+          $ref: '#/components/schemas/Gram'
+        tanggal:
+          type: string
+          format: date
+    Pembayaran:
+      type: object
+      required: [lot_id, nominal, status, jatuh_tempo]
+      properties:
+        lot_id:
+          type: string
+        nominal:
+          $ref: '#/components/schemas/Rupiah'
+        status:
+          type: string
+          enum: [MENUNGGU, DIBAYAR, TERLAMBAT]
+        jatuh_tempo:
+          type: string
+          format: date
+          description: H+1 setelah lot diterima.
+        denda:
+          $ref: '#/components/schemas/Rupiah'
+          description: Denda Lumbung 0,5 persen per hari, maksimal 5 persen.
+    HargaGrade:
+      type: object
+      required: [a, b]
+      properties:
+        a:
+          $ref: '#/components/schemas/Rupiah'
+        b:
+          $ref: '#/components/schemas/Rupiah'
+    PapanHarga:
+      type: object
+      required: [cabai, bawang, kangkung, fee, berlaku]
+      properties:
+        cabai:
+          $ref: '#/components/schemas/HargaGrade'
+        bawang:
+          $ref: '#/components/schemas/HargaGrade'
+        kangkung:
+          $ref: '#/components/schemas/HargaGrade'
+        fee:
+          type: object
+          required: [dekat, jauh]
+          properties:
+            dekat:
+              type: integer
+              const: 1500
+            jauh:
+              type: integer
+              const: 2500
+        berlaku:
+          type: string
+          examples: ['2026-10-06 s.d. 2026-10-12']
+    TerbitPapanRequest:
+      type: object
+      required: [uuid, berlaku_mulai, referensi]
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        berlaku_mulai:
+          type: string
+          format: date
+          description: Hari Senin minggu berlaku.
+        referensi:
+          type: array
+          description: Tiga harga pasar referensi per komoditas (Pasar Induk, pasar kota, eceran daring).
+          items:
+            type: object
+            required: [komoditas, harga]
+            properties:
+              komoditas:
+                $ref: '#/components/schemas/Komoditas'
+              harga:
+                type: array
+                minItems: 3
+                maxItems: 3
+                items:
+                  $ref: '#/components/schemas/Rupiah'
+    Profil:
+      type: object
+      required: [nama]
+      properties:
+        nama:
+          type: string
+        deskripsi:
+          type: string
+        kontak_kemitraan:
+          type: string
+    RekapHarian:
+      type: object
+      required: [tanggal, masuk, fee_tertagih, susut_persen]
+      properties:
+        tanggal:
+          type: string
+          format: date
+        masuk:
+          type: array
+          items:
+            type: object
+            required: [komoditas, berat_g]
+            properties:
+              komoditas:
+                $ref: '#/components/schemas/Komoditas'
+              berat_g:
+                $ref: '#/components/schemas/Gram'
+        fee_tertagih:
+          $ref: '#/components/schemas/Rupiah'
+        susut_persen:
+          type: number
+          description: Target susut total di bawah 5 persen.
+    Invoice:
+      type: object
+      required: [id, pembeli, minggu, nominal, status, jatuh_tempo]
+      properties:
+        id:
+          type: string
+        pembeli:
+          type: string
+        minggu:
+          type: string
+          examples: ['2026-W41']
+        nominal:
+          $ref: '#/components/schemas/Rupiah'
+        status:
+          type: string
+          enum: [TERBIT, LUNAS, LEWAT_JATUH_TEMPO]
+        jatuh_tempo:
+          type: string
+          format: date
+        denda:
+          $ref: '#/components/schemas/Rupiah'
+          description: 1 persen per minggu, maksimal 4 persen.
+    Mitra:
+      type: object
+      required: [kode, nama, status]
+      properties:
+        kode:
+          type: string
+          pattern: '^PTN-\d{3}$'
+        nama:
+          type: string
+        status:
+          type: string
+          enum: [AKTIF, NONAKTIF]
+    AuditHasil:
+      type: object
+      required: [audit_id]
+      properties:
+        audit_id:
+          type: string
+          pattern: '^AUD-\d{8}-\d{3}$'
+          examples: [AUD-20261009-003]
+          description: ID audit (nama + waktu) yang tampil di dasbor.
+    Fee:
+      type: object
+      description: Rujukan skema fee per pesanan (`PSO-YYYYMMDD-NNN`); nominal = berat kg x tarif zona.
+      required: [pesanan, berat_g, zona, tarif_per_kg, nominal]
+      properties:
+        pesanan:
+          type: string
+          pattern: '^PSO-\d{8}-\d{3}$'
+        berat_g:
+          $ref: '#/components/schemas/Gram'
+        zona:
+          $ref: '#/components/schemas/Zona'
+        tarif_per_kg:
+          type: integer
+          enum: [1500, 2500]
+        nominal:
+          $ref: '#/components/schemas/Rupiah'
+          description: Contoh 170.000 g zona DEKAT = 170 x 1.500 = 255.000.
