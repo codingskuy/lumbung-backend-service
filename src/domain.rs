@@ -33,6 +33,38 @@ impl Komoditas {
     }
 }
 
+/// Grade mutu hasil sortir (FSD/20): A dan B masuk rantai dingin, C dialihkan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Grade {
+    /// Grade A (dibayar 100 persen harga papan).
+    A,
+    /// Grade B (dibayar 85 persen harga papan).
+    B,
+    /// Grade C (tidak masuk rantai dingin; alihnya dicatat, FR-003).
+    C,
+}
+
+impl Grade {
+    /// Nilai teks seperti di basis data dan kontrak.
+    pub fn sebagai_str(self) -> &'static str {
+        match self {
+            Grade::A => "A",
+            Grade::B => "B",
+            Grade::C => "C",
+        }
+    }
+}
+
+/// Hasil aksi idempoten (`AksiHasil` pada kontrak): `duplikat` true bila UUID klien sudah diproses.
+#[derive(Debug, Serialize)]
+pub struct AksiHasil {
+    /// ID rekaman hasil.
+    pub id: String,
+    /// `true` bila UUID klien sama sudah pernah diproses.
+    pub duplikat: bool,
+}
+
 /// Tarif dan persentase terkunci v1.0.0 (BRD/30-keuangan-fee). Angka bisnis hanya dari dokumen.
 pub mod tarif {
     /// Fee logistik zona DEKAT (<15 km), rupiah per kg (BR-301).

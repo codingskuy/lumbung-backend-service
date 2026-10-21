@@ -10,6 +10,8 @@ pub mod db;
 pub mod domain;
 pub mod error;
 pub mod extract;
+pub mod keranjang;
+pub mod lot;
 pub mod papan_harga;
 pub mod routes;
 pub mod sistem;

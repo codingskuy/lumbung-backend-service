@@ -12,7 +12,7 @@ use axum::{
 use serde_json::{json, Value};
 use tower_http::{cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
-use crate::{auth::handlers as auth, papan_harga, sistem, state::AppState};
+use crate::{auth::handlers as auth, keranjang, lot, papan_harga, sistem, state::AppState};
 
 /// Endpoint kesehatan infra: menjawab `ok` hanya bila query ringan ke DB berhasil.
 async fn healthz(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
@@ -32,6 +32,10 @@ fn api_v1() -> Router<AppState> {
         .route("/auth/keluar", post(auth::keluar))
         .route("/gudang/masuk", post(auth::gudang_masuk))
         .route("/gudang/keluar", post(auth::gudang_keluar))
+        .route("/lot", post(lot::buat))
+        .route("/lot/{id}/sortir", post(lot::sortir))
+        .route("/keranjang/batch", post(keranjang::batch))
+        .route("/stok-lot", get(keranjang::stok_lot))
         .route("/papan-harga", get(papan_harga::petani))
         .route("/publik/papan-harga", get(papan_harga::publik))
         .route("/admin/papan-harga", post(papan_harga::terbit))
