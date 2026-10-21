@@ -10,7 +10,7 @@ tokio = { version = "1.47.1", features = ["full"] }
 tower-http = { version = "0.6.2", features = ["trace", "cors", "timeout"] }
 
 # Database lumbung (Postgres khusus lumbung)
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "uuid", "migrate", "chrono"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "uuid", "migrate", "chrono", "json"] }
 
 # Observability + error
 tracing = "0.1.41"
@@ -31,3 +31,12 @@ argon2 = "0.5.3"
 
 [dev-dependencies]
 tokio = { version = "1.47.1", features = ["full", "test-util"] }
+# Uji: panggil router tanpa soket (oneshot) dan bangkitkan pasangan kunci ed25519 sementara.
+tower = { version = "0.5.3", features = ["util"] }
+ring = "0.17.14"
+
+# Hash PIN argon2 sangat lambat tanpa optimasi pada build debug (uji #[sqlx::test]).
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
