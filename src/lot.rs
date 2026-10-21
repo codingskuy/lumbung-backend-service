@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     audit,
-    auth::{peran::Peran, principal::Gudang},
+    auth::principal::OperatorGudang,
     domain::{AksiHasil, Hasil, Komoditas, Konteks},
     error::{AppError, AppResult},
     extract::ApiJson,
@@ -292,13 +292,9 @@ pub async fn buat_lot_tx(
 /// `POST /lot`: buat lot dan catat timbang kotor; kode resmi `L-NNNN` dari server.
 pub async fn buat(
     State(state): State<AppState>,
-    gudang: Gudang,
+    OperatorGudang(gudang): OperatorGudang,
     ApiJson(req): ApiJson<BuatLotRequest>,
 ) -> AppResult<Response> {
-    gudang
-        .pengguna
-        .wajib_peran(&state, &[Peran::AdminGudang])
-        .await?;
     let ctx = gudang.konteks();
     let mut tx = state.pool.begin().await?;
     let hasil = buat_lot_tx(&mut tx, &ctx, &req, None).await?;
@@ -410,14 +406,10 @@ pub async fn sortir_tx(
 /// `POST /lot/{id}/sortir`: catat hasil sortir A/B/C; total harus dalam 2 persen berat kotor.
 pub async fn sortir(
     State(state): State<AppState>,
-    gudang: Gudang,
+    OperatorGudang(gudang): OperatorGudang,
     Path(id): Path<String>,
     ApiJson(req): ApiJson<SortirRequest>,
 ) -> AppResult<Response> {
-    gudang
-        .pengguna
-        .wajib_peran(&state, &[Peran::AdminGudang])
-        .await?;
     let ctx = gudang.konteks();
     let mut tx = state.pool.begin().await?;
     let hasil = sortir_tx(&mut tx, &ctx, &id, &req).await?;

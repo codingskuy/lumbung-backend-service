@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     audit,
-    auth::{peran::Peran, principal::Gudang},
+    auth::principal::OperatorGudang,
     domain::{AksiHasil, Grade, Hasil, Konteks},
     error::{AppError, AppResult},
     extract::ApiJson,
@@ -232,13 +232,9 @@ pub async fn batch_tx(
 /// `POST /keranjang/batch`: catat hingga 50 keranjang secara atomik (semua atau tidak sama sekali).
 pub async fn batch(
     State(state): State<AppState>,
-    gudang: Gudang,
+    OperatorGudang(gudang): OperatorGudang,
     ApiJson(req): ApiJson<KeranjangBatchRequest>,
 ) -> AppResult<Response> {
-    gudang
-        .pengguna
-        .wajib_peran(&state, &[Peran::AdminGudang])
-        .await?;
     validasi(&req)?;
     let ctx = gudang.konteks();
     periksa_grade_c(&state.pool, &ctx, &req).await?;
@@ -285,12 +281,8 @@ async fn sisa_grade(
 /// `GET /stok-lot`: sisa per lot dan grade (A/B) yang masih bisa dialokasikan.
 pub async fn stok_lot(
     State(state): State<AppState>,
-    gudang: Gudang,
+    OperatorGudang(_): OperatorGudang,
 ) -> AppResult<Json<serde_json::Value>> {
-    gudang
-        .pengguna
-        .wajib_peran(&state, &[Peran::AdminGudang])
-        .await?;
     let data = sqlx::query_as::<_, StokLot>(
         "SELECT kode AS lot_id, komoditas, grade, sisa_g FROM (
             SELECT l.kode, l.komoditas, 'A' AS grade,

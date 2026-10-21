@@ -19,10 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     audit,
-    auth::{
-        peran::Peran,
-        principal::{AkunAdmin, Pengguna},
-    },
+    auth::principal::{AdminGudangAkses, Pengguna},
     domain::{tarif, Komoditas},
     error::{AppError, AppResult},
     extract::ApiJson,
@@ -206,10 +203,9 @@ fn validasi(req: &TerbitPapanRequest) -> AppResult<[[i64; 3]; 3]> {
 /// `POST /admin/papan-harga`: terbitkan papan mingguan (admin gudang atau kunci layanan), beraudit.
 pub async fn terbit(
     State(state): State<AppState>,
-    akun: AkunAdmin,
+    AdminGudangAkses(akun): AdminGudangAkses,
     ApiJson(req): ApiJson<TerbitPapanRequest>,
 ) -> AppResult<Response> {
-    akun.wajib_peran(&state, &[Peran::AdminGudang]).await?;
     let referensi = validasi(&req)?;
 
     let mut tx = state.pool.begin().await?;

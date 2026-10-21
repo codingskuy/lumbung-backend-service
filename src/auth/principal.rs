@@ -284,3 +284,58 @@ impl FromRequestParts<AppState> for AkunAdmin {
         Ok(AkunAdmin::Pengguna(pengguna))
     }
 }
+
+/// Operator gudang: bearer + `X-Device-Key` sah dan peran `admin_gudang`. Peran diperiksa sebelum
+/// badan permintaan dibaca, sehingga peran salah selalu 403 (bukan 422 dari validasi badan).
+#[derive(Debug, Clone)]
+pub struct OperatorGudang(pub Gudang);
+
+impl FromRequestParts<AppState> for OperatorGudang {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let gudang = Gudang::from_request_parts(parts, state).await?;
+        gudang
+            .pengguna
+            .wajib_peran(state, &[Peran::AdminGudang])
+            .await?;
+        Ok(OperatorGudang(gudang))
+    }
+}
+
+/// Sopir terautentikasi (bearer, peran `sopir`); peran diperiksa sebelum badan dibaca.
+#[derive(Debug, Clone)]
+pub struct PeranSopir(pub Pengguna);
+
+impl FromRequestParts<AppState> for PeranSopir {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let pengguna = Pengguna::from_request_parts(parts, state).await?;
+        pengguna.wajib_peran(state, &[Peran::Sopir]).await?;
+        Ok(PeranSopir(pengguna))
+    }
+}
+
+/// Admin gudang lewat sesi bearer atau kunci layanan (web); peran diperiksa sebelum badan dibaca.
+#[derive(Debug, Clone)]
+pub struct AdminGudangAkses(pub AkunAdmin);
+
+impl FromRequestParts<AppState> for AdminGudangAkses {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let akun = AkunAdmin::from_request_parts(parts, state).await?;
+        akun.wajib_peran(state, &[Peran::AdminGudang]).await?;
+        Ok(AdminGudangAkses(akun))
+    }
+}
