@@ -31,6 +31,7 @@ pub const LAMA_KUNCI_MENIT: i64 = 15;
 
 /// Badan `POST /auth/masuk`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MasukRequest {
     /// Akun peran, contoh `sopir-02`.
     pub akun: String,
@@ -40,6 +41,7 @@ pub struct MasukRequest {
 
 /// Badan `POST /auth/refresh`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RefreshRequest {
     /// Refresh token (`<id>.<rahasia>`).
     pub refresh_token: String,
@@ -47,6 +49,7 @@ pub struct RefreshRequest {
 
 /// Badan `POST /gudang/masuk`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GudangMasukRequest {
     /// Kode operator, contoh `OPR-SORTIR-1`.
     pub operator: String,

@@ -50,8 +50,10 @@ pub struct TitikRequest {
     /// Waktu kejadian (RFC 3339 dengan offset).
     pub waktu: DateTime<Utc>,
     /// Lintang.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub lat: Option<f64>,
     /// Bujur.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub lng: Option<f64>,
 }
 
@@ -70,8 +72,10 @@ pub struct BuktiTerimaRequest {
     /// ID foto hasil `POST /unggah-foto`, maksimal 4.
     pub foto_ids: Vec<Uuid>,
     /// ID berkas tanda tangan penerima (opsional).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub tanda_tangan: Option<String>,
     /// Catatan bebas.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub catatan: Option<String>,
 }
 
@@ -84,8 +88,10 @@ pub struct InsidenRequest {
     /// Jenis insiden, contoh `keterlambatan`.
     pub jenis: String,
     /// Catatan bebas.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub catatan: Option<String>,
     /// Foto pendukung, maksimal 4.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub foto_ids: Option<Vec<Uuid>>,
 }
 
@@ -310,7 +316,9 @@ async fn perbarui_lot_diterima(conn: &mut PgConnection, trip_id: Uuid) -> AppRes
     Ok(())
 }
 
-async fn pastikan_foto_ada(conn: &mut PgConnection, foto_ids: &[Uuid]) -> AppResult<()> {
+/// Validasi murni daftar foto (jumlah dan dobel); dilakukan SEBELUM pencarian idempotensi agar
+/// permintaan yang melanggar skema tidak diterima diam-diam sebagai duplikat.
+fn validasi_foto_ids(foto_ids: &[Uuid]) -> AppResult<()> {
     if foto_ids.len() > MAKS_FOTO_PER_BUKTI {
         return Err(AppError::Unprocessable(format!(
             "foto maksimal {MAKS_FOTO_PER_BUKTI} per bukti"
@@ -320,6 +328,11 @@ async fn pastikan_foto_ada(conn: &mut PgConnection, foto_ids: &[Uuid]) -> AppRes
     if unik.len() != foto_ids.len() {
         return Err(AppError::Unprocessable("foto_ids dobel".into()));
     }
+    Ok(())
+}
+
+async fn pastikan_foto_ada(conn: &mut PgConnection, foto_ids: &[Uuid]) -> AppResult<()> {
+    validasi_foto_ids(foto_ids)?;
     if foto_ids.is_empty() {
         return Ok(());
     }
@@ -359,6 +372,7 @@ pub async fn bukti_terima_tx(
             "tanda_tangan maksimal 128 dan catatan maksimal 2000 karakter".into(),
         ));
     }
+    validasi_foto_ids(&req.foto_ids)?;
     let ada: bool =
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM bukti_terima WHERE uuid_klien = $1)")
             .bind(req.uuid)
@@ -442,6 +456,7 @@ pub async fn insiden_tx(
             "catatan maksimal 2000 karakter".into(),
         ));
     }
+    validasi_foto_ids(req.foto_ids.as_deref().unwrap_or_default())?;
     let ada: Option<String> = sqlx::query_scalar("SELECT kode FROM insiden WHERE uuid_klien = $1")
         .bind(req.uuid)
         .fetch_optional(&mut *conn)

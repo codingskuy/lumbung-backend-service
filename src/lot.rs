@@ -127,6 +127,7 @@ pub struct BuatLotRequest {
     /// Berat kotor (gram integer, lebih dari 0).
     pub berat_kotor_g: i64,
     /// Kode petugas, contoh `OPR-SORTIR-1` (bawaan: akun sesi).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub petugas: Option<String>,
 }
 
@@ -145,6 +146,7 @@ pub struct SortirRequest {
     /// Grade C (gram).
     pub grade_c_g: i64,
     /// Kode petugas (bawaan: akun sesi).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub petugas: Option<String>,
 }
 

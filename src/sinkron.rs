@@ -63,10 +63,12 @@ pub struct Rekaman {
     /// Jenis rekaman.
     pub jenis: Jenis,
     /// Nomor sementara `TMP-*` yang akan dipetakan ke nomor resmi.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub nomor_sementara: Option<String>,
-    /// Badan request endpoint asal.
-    pub payload: Value,
+    /// Badan request endpoint asal (harus objek JSON; bukan objek = 422 untuk seluruh request).
+    pub payload: serde_json::Map<String, Value>,
     /// Waktu rekaman dibuat di perangkat.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub dibuat_pada: Option<DateTime<Utc>>,
 }
 
@@ -101,10 +103,7 @@ fn nomor_sementara_valid(n: &str) -> bool {
 
 /// Sisipkan `uuid` rekaman ke payload dan urai ke tipe request asal.
 fn urai<T: serde::de::DeserializeOwned>(rek: &Rekaman) -> AppResult<T> {
-    let mut payload = rek.payload.clone();
-    let objek = payload
-        .as_object_mut()
-        .ok_or_else(|| AppError::Unprocessable("payload harus berupa objek JSON".into()))?;
+    let mut objek = rek.payload.clone();
     match objek.get("uuid") {
         None => {
             objek.insert("uuid".into(), Value::String(rek.uuid.to_string()));
@@ -116,7 +115,7 @@ fn urai<T: serde::de::DeserializeOwned>(rek: &Rekaman) -> AppResult<T> {
             ))
         }
     }
-    serde_json::from_value(payload)
+    serde_json::from_value(Value::Object(objek))
         .map_err(|e| AppError::Unprocessable(format!("payload tidak sah: {e}")))
 }
 
@@ -255,6 +254,17 @@ pub async fn batch(
         return Err(AppError::Unprocessable(format!(
             "rekaman maksimal {MAKS_REKAMAN} per request, diterima {}",
             req.rekaman.len()
+        )));
+    }
+    // Format `nomor_sementara` adalah bagian skema: salah format menolak seluruh request (422).
+    if let Some(n) = req
+        .rekaman
+        .iter()
+        .filter_map(|r| r.nomor_sementara.as_deref())
+        .find(|n| !nomor_sementara_valid(n))
+    {
+        return Err(AppError::Unprocessable(format!(
+            "nomor_sementara {n} harus berformat TMP-xxxxxxxx (8 heksadesimal huruf kecil)"
         )));
     }
     let ctx = gudang.konteks();

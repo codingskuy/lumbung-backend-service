@@ -53,3 +53,13 @@ impl<S: Send + Sync> FromRequestParts<S> for PerangkatId {
         Ok(PerangkatId(nilai))
     }
 }
+
+/// Deserialisasi bidang opsional yang MENOLAK `null` eksplisit: bidang boleh dihilangkan, tetapi bila
+/// ada harus bertipe sesuai skema (skema OpenAPI tidak menandai bidang ini `nullable`).
+pub fn opsional_tanpa_null<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(d).map(Some)
+}

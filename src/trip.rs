@@ -75,10 +75,13 @@ pub struct TitikBaru {
     /// Zona fee titik ini.
     pub zona: Zona,
     /// Pesanan `PSO-YYYYMMDD-NNN` yang dilayani titik ini (dasar fee, LMB-BE-006).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub pesanan: Option<String>,
     /// Pembeli yang ditagih fee (invoice mingguan per pembeli), maksimal 64 karakter.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub pembeli: Option<String>,
     /// Keranjang (subset `keranjang` trip) yang diantar ke titik ini.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub keranjang: Option<Vec<String>>,
 }
 
@@ -93,14 +96,18 @@ pub struct BuatTripRequest {
     /// Kendaraan, contoh `L 1234 AB`.
     pub kendaraan: String,
     /// Kas jalan; bila ada harus Rp300.000 (FSD/20), bila kosong memakai nilai itu.
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub kas_jalan: Option<i64>,
     /// Kode keranjang yang dimuat (`KRJ-NNN`, minimal 1).
     pub keranjang: Vec<String>,
     /// Tanggal tugas (bawaan: hari ini WIB).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub tanggal: Option<NaiveDate>,
     /// Akun sopir yang bertugas (opsional).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub sopir: Option<String>,
     /// Titik tujuan berurutan (opsional).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub titik: Option<Vec<TitikBaru>>,
 }
 
@@ -111,6 +118,7 @@ pub struct SuratJalanRequest {
     /// UUID klien (idempotensi).
     pub uuid: Uuid,
     /// Kode trip; hanya dipakai rekaman sinkron (pada endpoint, kode trip ada di path).
+    #[serde(default, deserialize_with = "crate::extract::opsional_tanpa_null")]
     pub trip_id: Option<String>,
 }
 
