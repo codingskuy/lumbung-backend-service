@@ -339,3 +339,39 @@ impl FromRequestParts<AppState> for AdminGudangAkses {
         Ok(AdminGudangAkses(akun))
     }
 }
+
+/// Petani terautentikasi (bearer, peran `petani`); peran diperiksa sebelum badan dibaca.
+#[derive(Debug, Clone)]
+pub struct PeranPetani(pub Pengguna);
+
+impl FromRequestParts<AppState> for PeranPetani {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let pengguna = Pengguna::from_request_parts(parts, state).await?;
+        pengguna.wajib_peran(state, &[Peran::Petani]).await?;
+        Ok(PeranPetani(pengguna))
+    }
+}
+
+/// Admin keuangan atau admin gudang lewat sesi bearer, atau kunci layanan (web); peran diperiksa
+/// sebelum badan dibaca. Koordinator tani tidak punya akses invoice.
+#[derive(Debug, Clone)]
+pub struct AdminKeuanganAkses(pub AkunAdmin);
+
+impl FromRequestParts<AppState> for AdminKeuanganAkses {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let akun = AkunAdmin::from_request_parts(parts, state).await?;
+        akun.wajib_peran(state, &[Peran::AdminKeuangan, Peran::AdminGudang])
+            .await?;
+        Ok(AdminKeuanganAkses(akun))
+    }
+}
