@@ -3,6 +3,7 @@
 //! `main.rs` hanya merakit konfigurasi dan menyalakan server; router dan semua logika
 //! ada di sini agar bisa diuji `#[sqlx::test]` lewat `tower::ServiceExt::oneshot`.
 
+pub mod admin;
 pub mod audit;
 pub mod auth;
 pub mod config;

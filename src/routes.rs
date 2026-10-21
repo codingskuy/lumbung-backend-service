@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tower_http::{cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
 use crate::{
-    auth::handlers as auth, error::AppError, invoice, keranjang, lot, papan_harga, pembayaran,
-    sinkron, sistem, sopir, state::AppState, trip,
+    admin, auth::handlers as auth, error::AppError, invoice, keranjang, lot, papan_harga,
+    pembayaran, sinkron, sistem, sopir, state::AppState, trip,
 };
 
 /// Endpoint kesehatan infra: menjawab `ok` hanya bila query ringan ke DB berhasil.
@@ -61,6 +61,13 @@ fn api_v1() -> Router<AppState> {
         .route("/pembayaran-saya", get(pembayaran::saya))
         .route("/admin/invoice", get(invoice::daftar))
         .route("/admin/invoice/{id}/lunas", post(invoice::lunas))
+        .route("/admin/rekap-harian", get(admin::rekap_harian))
+        .route("/admin/mitra", get(admin::mitra))
+        .route("/admin/mitra/{id}/status", post(admin::mitra_status))
+        .route("/admin/insiden", get(admin::insiden))
+        .route("/publik/profil", get(admin::profil))
+        .route("/kontrak-saya", get(admin::kontrak_saya))
+        .route("/rencana-setoran", post(admin::rencana_setoran))
         .route("/papan-harga", get(papan_harga::petani))
         .route("/publik/papan-harga", get(papan_harga::publik))
         .route("/admin/papan-harga", post(papan_harga::terbit))
