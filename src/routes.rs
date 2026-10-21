@@ -12,7 +12,7 @@ use axum::{
 use serde_json::{json, Value};
 use tower_http::{cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
-use crate::{auth::handlers as auth, state::AppState};
+use crate::{auth::handlers as auth, papan_harga, sistem, state::AppState};
 
 /// Endpoint kesehatan infra: menjawab `ok` hanya bila query ringan ke DB berhasil.
 async fn healthz(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
@@ -26,11 +26,15 @@ async fn healthz(State(state): State<AppState>) -> Result<Json<Value>, StatusCod
 /// Rute API v1 (relatif terhadap `/v1`).
 fn api_v1() -> Router<AppState> {
     Router::new()
+        .route("/kesehatan", get(sistem::kesehatan))
         .route("/auth/masuk", post(auth::masuk))
         .route("/auth/refresh", post(auth::refresh))
         .route("/auth/keluar", post(auth::keluar))
         .route("/gudang/masuk", post(auth::gudang_masuk))
         .route("/gudang/keluar", post(auth::gudang_keluar))
+        .route("/papan-harga", get(papan_harga::petani))
+        .route("/publik/papan-harga", get(papan_harga::publik))
+        .route("/admin/papan-harga", post(papan_harga::terbit))
 }
 
 /// Router lengkap layanan.
