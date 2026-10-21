@@ -511,7 +511,13 @@ paths:
       tags: [Petani]
       operationId: pembayaranSaya
       summary: Riwayat pembayaran H+1 petani
-      description: Pembayaran dihitung dari berat bersih per grade x harga papan minggu berjalan; target ketepatan minimal 95% lot per minggu.
+      description: |
+        Pembayaran dihitung dari berat bersih per grade x harga papan minggu berjalan (Grade A harga papan A,
+        Grade B harga papan B yang sudah memuat faktor 85 persen; Grade C tidak dibayar); target ketepatan minimal
+        95% lot per minggu. Dibuat saat sortir dicatat, jatuh tempo H+1 (tanggal WIB). Denda Lumbung 0,5 persen
+        per hari keterlambatan, maksimal 5 persen, otomatis; status `TERLAMBAT` setelah jatuh tempo. Hanya peran
+        `petani`; difilter server per id petani (akun peran = kode petani), parameter apa pun diabaikan. Lot yang
+        papan minggunya belum terbit belum tampil karena nominalnya belum bisa dihitung.
       parameters:
         - $ref: '#/components/parameters/PerangkatId'
       responses:
@@ -756,7 +762,9 @@ paths:
       description: |
         Server menerbitkan nomor unik `SJ-YYYYMMDD-NNN` (urutan per hari WIB); nomor sementara `TMP-*` dipetakan
         otomatis dan cetak ulang tersedia bila nomor berubah. Satu surat jalan per trip: `uuid` berbeda untuk
-        trip yang sama `409`. Fee per pesanan ditambahkan di LMB-BE-006.
+        trip yang sama `409`. Fee dihitung server per pesanan (titik dengan `pesanan` dan keranjang yang
+        ditetapkan): berat gram x tarif zona per kg (DEKAT Rp1.500, JAUH Rp2.500), rupiah integer dibulatkan
+        setengah naik; contoh 170.000 g zona DEKAT = Rp255.000. `fee_total` dan `rincian_fee` ada pada respons 201.
       security:
         - bearerAuth: []
           deviceKey: []
@@ -980,7 +988,13 @@ paths:
       tags: [Admin]
       operationId: adminInvoice
       summary: Daftar invoice fee mingguan
-      description: Invoice terbit tiap Senin untuk surat jalan minggu sebelumnya; jatuh tempo 7 hari; denda 1 persen per minggu maksimal 4 persen.
+      description: |
+        Invoice per pembeli terbit tiap Senin untuk surat jalan minggu ISO sebelumnya. `minggu` adalah minggu ISO
+        surat jalan yang ditagih; invoice berstatus terbit pada Senin sesudahnya, jatuh tempo 7 hari kemudian.
+        Denda 1 persen per minggu keterlambatan (minggu berjalan dihitung penuh), maksimal 4 persen; beku saat lunas.
+        Untuk minggu yang sudah berakhir, invoice yang belum ada diterbitkan saat daftar dibaca (idempoten);
+        minggu yang belum berakhir menghasilkan daftar kosong. Peran `admin_keuangan`, `admin_gudang`, atau
+        `X-Service-Key`; peran lain `403`. `minggu` kosong atau salah format `422`.
       security:
         - bearerAuth: []
         - serviceKey: []
@@ -1125,7 +1139,9 @@ paths:
       tags: [Admin]
       operationId: adminInvoiceLunas
       summary: Tandai invoice lunas
-      description: Beraudit; mengembalikan `audit_id`.
+      description: |
+        Beraudit; mengembalikan `audit_id`. `{id}` adalah kode invoice `INV-YYYYMMDD-NNN` (tanggal terbit).
+        Denda saat itu dibekukan. Sudah lunas `409`. Peran `admin_keuangan`, `admin_gudang`, atau `X-Service-Key`.
       security:
         - bearerAuth: []
         - serviceKey: []
@@ -1581,7 +1597,11 @@ components:
         pesanan:
           type: string
           pattern: '^PSO-\d{8}-\d{3}$'
-          description: Pesanan yang dilayani titik ini (dasar fee per pesanan).
+          description: Pesanan yang dilayani titik ini (dasar fee per pesanan); tidak boleh dobel pada satu trip.
+        pembeli:
+          type: string
+          maxLength: 64
+          description: Pembeli yang ditagih fee (invoice mingguan per pembeli). Fee tanpa pembeli tidak masuk invoice. Tambahan opsional v1.0.0 (ADR-0005).
         keranjang:
           type: array
           description: Subset keranjang trip yang diantar ke titik ini.
@@ -1978,6 +1998,7 @@ components:
           examples: ['2026-W41']
         nominal:
           $ref: '#/components/schemas/Rupiah'
+          description: Total fee minggu itu, tanpa denda.
         status:
           type: string
           enum: [TERBIT, LUNAS, LEWAT_JATUH_TEMPO]
