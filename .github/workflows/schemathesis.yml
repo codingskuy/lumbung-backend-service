@@ -1,0 +1,58 @@
+name: Schemathesis (manual)
+
+# Uji properti terhadap docs/api/openapi.yaml dan server lokal (LMB-BE-TEST-SCHEMATHESIS).
+# Hanya manual (workflow_dispatch); telemetri dimatikan; tidak ada data keluar.
+on:
+  workflow_dispatch:
+    inputs:
+      max_examples:
+        description: Contoh per operasi
+        default: "50"
+
+jobs:
+  schemathesis:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumbung
+          POSTGRES_PASSWORD: lumbung
+          POSTGRES_DB: lumbung_uji
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lumbung" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://lumbung:lumbung@localhost:5432/lumbung_uji
+      LISTEN_ADDR: 127.0.0.1:8080
+      DEVICE_API_KEY_GUDANG: kunci-gudang-ci
+      SERVICE_API_KEY: kunci-layanan-ci
+      SCHEMATHESIS_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+      - name: Bangun
+        run: cargo build
+      - name: Jalankan server (kunci JWT sementara)
+        run: |
+          openssl genpkey -algorithm ed25519 -out /tmp/priv.pem
+          openssl pkey -in /tmp/priv.pem -pubout -out /tmp/pub.pem
+          export JWT_ED25519_PRIVATE="$(cat /tmp/priv.pem)" JWT_ED25519_PUBLIC="$(cat /tmp/pub.pem)"
+          nohup ./target/debug/lumbung-backend-service > server.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf localhost:8080/healthz && break; sleep 1; done
+      - name: Schemathesis
+        env:
+          BASE_URL: http://127.0.0.1:8080/v1
+          DEVICE_KEY: kunci-gudang-ci
+          SERVICE_KEY: kunci-layanan-ci
+          MAX_EXAMPLES: ${{ inputs.max_examples }}
+        run: contract/schemathesis.sh
+      - name: Laporan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schemathesis-laporan
+          path: |
+            contract/laporan
+            server.log
