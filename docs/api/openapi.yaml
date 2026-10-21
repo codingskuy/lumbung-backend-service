@@ -1134,6 +1134,82 @@ paths:
         '500':
           $ref: '#/components/responses/GalatServer'
 
+  /admin/tarif-fee:
+    get:
+      tags: [Admin]
+      operationId: adminTarifFee
+      summary: Tarif fee berlaku dan riwayat/jadwal
+      description: |
+        Tarif fee per kg yang berlaku hari ini (WIB) dan seluruh riwayat serta jadwal tarif, terbaru dahulu.
+        Baris awal `2000-01-01` memuat tarif BR-301 (DEKAT 1500, JAUH 2500). Peran admin apa pun atau `X-Service-Key`.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      responses:
+        '200':
+          description: Tarif berlaku dan riwayat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TarifFeeDaftar'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+    post:
+      tags: [Admin]
+      operationId: adminTerbitTarifFee
+      summary: Jadwalkan tarif fee baru
+      description: |
+        Menjadwalkan tarif fee baru per kg (rupiah integer) untuk kedua zona. Aturan BR-306: pemberitahuan minimal
+        30 hari (`berlaku_mulai` paling cepat hari ini + 30 hari, WIB; selain itu `422`); tiap zona berubah paling
+        banyak 10 persen dari tarif yang berlaku pada `berlaku_mulai` (`422`); paling banyak satu perubahan per semester
+        kalender (Jan-Jun, Jul-Des) dan satu tarif per `berlaku_mulai` (`409`). Tarif baru dipakai fee surat jalan
+        yang terbit pada atau sesudah tanggal itu dan dicantumkan pada papan harga minggu yang dimulai sesudahnya.
+        Idempoten via `uuid` (kirim ulang `200` `duplikat: true`). Beraudit: mengembalikan `audit_id`.
+        Hanya peran `admin_gudang` atau `X-Service-Key` (web); peran lain `403`.
+      security:
+        - bearerAuth: []
+        - serviceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerbitTarifFeeRequest'
+            example:
+              uuid: 6b0d8a4e-1c2f-4d5a-8e91-2f3a4b5c6d7e
+              berlaku_mulai: '2026-12-01'
+              dekat: 1650
+              jauh: 2750
+      responses:
+        '200':
+          description: UUID klien sudah pernah diproses; `audit_id` pertama dikembalikan dengan `duplikat` true.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditHasil'
+        '201':
+          description: Tarif dijadwalkan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditHasil'
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
+        '401':
+          $ref: '#/components/responses/TidakSah'
+        '403':
+          $ref: '#/components/responses/Ditolak'
+        '409':
+          $ref: '#/components/responses/Konflik'
+        '422':
+          $ref: '#/components/responses/Validasi'
+        '500':
+          $ref: '#/components/responses/GalatServer'
+
   /admin/invoice/{id}/lunas:
     post:
       tags: [Admin]
@@ -1920,10 +1996,12 @@ components:
           properties:
             dekat:
               type: integer
-              const: 1500
+              minimum: 1
+              description: Tarif fee zona DEKAT per kg yang berlaku pada minggu papan (awal Rp1.500; dapat berubah lewat `POST /admin/tarif-fee`).
             jauh:
               type: integer
-              const: 2500
+              minimum: 1
+              description: Tarif fee zona JAUH per kg yang berlaku pada minggu papan (awal Rp2.500).
         berlaku:
           type: string
           examples: ['2026-10-06 s.d. 2026-10-12']
@@ -2020,6 +2098,65 @@ components:
         status:
           type: string
           enum: [AKTIF, NONAKTIF]
+    TerbitTarifFeeRequest:
+      type: object
+      required: [uuid, berlaku_mulai, dekat, jauh]
+      additionalProperties: false
+      properties:
+        uuid:
+          $ref: '#/components/schemas/UuidKlien'
+        berlaku_mulai:
+          type: string
+          format: date
+          description: Tanggal tarif berlaku; minimal 30 hari dari hari ini (WIB).
+        dekat:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Tarif zona DEKAT, rupiah per kg.
+        jauh:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Tarif zona JAUH, rupiah per kg.
+    TarifFee:
+      type: object
+      required: [dekat, jauh]
+      properties:
+        dekat:
+          type: integer
+          format: int64
+        jauh:
+          type: integer
+          format: int64
+    TarifFeeRiwayat:
+      type: object
+      required: [berlaku_mulai, dekat, jauh, diterbitkan_oleh]
+      properties:
+        berlaku_mulai:
+          type: string
+          format: date
+        dekat:
+          type: integer
+          format: int64
+        jauh:
+          type: integer
+          format: int64
+        diterbitkan_oleh:
+          type: string
+        audit_id:
+          type: [string, 'null']
+          description: Kosong untuk tarif awal BR-301.
+    TarifFeeDaftar:
+      type: object
+      required: [berlaku, riwayat]
+      properties:
+        berlaku:
+          $ref: '#/components/schemas/TarifFee'
+        riwayat:
+          type: array
+          items:
+            $ref: '#/components/schemas/TarifFeeRiwayat'
     AuditHasil:
       type: object
       required: [audit_id]
@@ -2046,7 +2183,8 @@ components:
           $ref: '#/components/schemas/Zona'
         tarif_per_kg:
           type: integer
-          enum: [1500, 2500]
+          minimum: 1
+          description: Tarif per kg zona itu pada tanggal surat jalan (awal 1500 DEKAT, 2500 JAUH; dapat berubah lewat `POST /admin/tarif-fee`).
         nominal:
           $ref: '#/components/schemas/Rupiah'
           description: Contoh 170.000 g zona DEKAT = 170 x 1.500 = 255.000.
