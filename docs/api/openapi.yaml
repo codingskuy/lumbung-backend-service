@@ -526,7 +526,7 @@ paths:
       tags: [Petani]
       operationId: papanHargaPetani
       summary: Papan harga minggu berjalan (baca saja)
-      description: Petani tidak dapat mengubah harga.
+      description: Petani tidak dapat mengubah harga. Perlu login (bearer); cache hanya privat (`Cache-Control: private, max-age=900`). `404` bila papan minggu berjalan belum terbit.
       parameters:
         - $ref: '#/components/parameters/PerangkatId'
       responses:
@@ -540,6 +540,8 @@ paths:
           $ref: '#/components/responses/TidakSah'
         '403':
           $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
         '500':
           $ref: '#/components/responses/GalatServer'
 
@@ -845,7 +847,10 @@ paths:
       tags: [Publik]
       operationId: publikPapanHarga
       summary: Papan harga publik minggu berjalan
-      description: Tanpa login; boleh di-cache CDN 15 menit. Berlaku Senin-Minggu; dihitung Jumat 15.00, publikasi maksimal 17.00.
+      description: |
+        Tanpa login; boleh di-cache CDN 15 menit (`Cache-Control: public, max-age=900`). Berlaku Senin-Minggu;
+        dihitung Jumat 15.00, publikasi maksimal 17.00. `404` bila papan minggu berjalan belum diterbitkan
+        (klien menampilkan "belum terbit"; tidak ada papan minggu lain yang dipakai sebagai pengganti).
       security: []
       responses:
         '200':
@@ -866,6 +871,8 @@ paths:
                 kangkung: {a: 6000, b: 5000}
                 fee: {dekat: 1500, jauh: 2500}
                 berlaku: '2026-10-06 s.d. 2026-10-12'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
         '429':
           $ref: '#/components/responses/BatasLaju'
         '500':
@@ -1033,7 +1040,11 @@ paths:
       summary: Terbitkan papan harga Jumat 15.00
       description: |
         3 komoditas x 2 grade + 2 zona fee. Formula: median 3 harga referensi dikurangi 10 persen buffer,
-        dibulatkan ke bawah kelipatan Rp500 (dihitung server). Beraudit nama + waktu; mengembalikan `audit_id`.
+        dibulatkan ke bawah kelipatan Rp500 (dihitung server); Grade B = 85 persen Grade A dibulatkan ke bawah
+        kelipatan Rp500; fee 2 zona tetap dari server. Hanya peran `admin_gudang` atau `X-Service-Key` (web) yang
+        diizinkan; peran lain `403` dan dicatat. Beraudit nama + waktu; mengembalikan `audit_id`. Satu papan per
+        minggu: papan kedua untuk `berlaku_mulai` yang sama dengan `uuid` berbeda `409`. Bidang selain yang
+        terdaftar (contoh `fee`, `harga`) ditolak `422`: klien tidak mengirim angka hitungan server.
       security:
         - bearerAuth: []
         - serviceKey: []
@@ -1044,6 +1055,15 @@ paths:
             schema:
               $ref: '#/components/schemas/TerbitPapanRequest'
       responses:
+        '200':
+          description: UUID klien sudah pernah diproses; `audit_id` pertama dikembalikan dengan `duplikat` true.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditHasil'
+              example:
+                audit_id: AUD-20261009-003
+                duplikat: true
         '201':
           description: Papan diterbitkan.
           content:
@@ -1796,16 +1816,17 @@ components:
     TerbitPapanRequest:
       type: object
       required: [uuid, berlaku_mulai, referensi]
+      additionalProperties: false
       properties:
         uuid:
           $ref: '#/components/schemas/UuidKlien'
         berlaku_mulai:
           type: string
           format: date
-          description: Hari Senin minggu berlaku.
+          description: Hari Senin minggu berlaku (selain Senin `422`); papan berlaku Senin sampai Minggu.
         referensi:
           type: array
-          description: Tiga harga pasar referensi per komoditas (Pasar Induk, pasar kota, eceran daring).
+          description: Tiga harga pasar referensi per komoditas (Pasar Induk, pasar kota, eceran daring); ketiga komoditas pilot wajib ada tepat sekali, harga lebih dari 0.
           items:
             type: object
             required: [komoditas, harga]
@@ -1893,6 +1914,9 @@ components:
           pattern: '^AUD-\d{8}-\d{3}$'
           examples: [AUD-20261009-003]
           description: ID audit (nama + waktu) yang tampil di dasbor.
+        duplikat:
+          type: boolean
+          description: true bila UUID klien sama sudah pernah diproses (hanya pada penulisan idempoten).
     Fee:
       type: object
       description: Rujukan skema fee per pesanan (`PSO-YYYYMMDD-NNN`); nominal = berat kg x tarif zona.
