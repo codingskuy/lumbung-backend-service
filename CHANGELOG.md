@@ -5,6 +5,7 @@ Semua perubahan penting lumbung-backend-service dicatat di sini. Format mengikut
 ## [Belum dirilis]
 
 ### Ditambahkan
+- Uji kontrak LMB-BE-TEST-SCHEMATHESIS: `contract/schemathesis.sh` (+ `seed.py`, workflow manual), `GET /v1/admin/rekap-harian|mitra|insiden` dan `/v1/publik/profil`, 501 terdokumentasi untuk `kontrak-saya`, `rencana-setoran`, `admin/mitra/{id}/status`, JSON baku untuk 404/405, ADR-0007.
 - Keuangan LMB-BE-006: fee per kg (Rp1.500 dekat, Rp2.500 jauh; `fee_total` dan `rincian_fee` pada surat jalan), invoice fee mingguan per pembeli (`GET /v1/admin/invoice`, terbit Senin, jatuh tempo 7 hari, denda 1%/minggu maks 4%, tugas latar per jam), `POST /v1/admin/invoice/{id}/lunas` (beraudit, denda dibekukan), pembayaran petani H+1 (`GET /v1/pembayaran-saya`, difilter server, denda 0,5%/hari maks 5%); migrasi `0006_fee_invoice_pembayaran.sql`, ADR-0005; 13 uji integrasi + 8 uji unit.
 - Trip dan sinkron LMB-BE-005: `POST /v1/trip` (`TRIP-RUTE-NNN`, kas jalan Rp300.000, titik/sopir/tanggal opsional), `POST /v1/trip/{id}/surat-jalan` (`SJ-YYYYMMDD-NNN`, TMP-* dipetakan), `POST /v1/sinkron/batch` (maks 200, FIFO, savepoint per rekaman, KONFLIK gudang menang, kunci offline 3x24 jam), endpoint sopir `GET /v1/trip-hari-ini`, `POST /v1/titik/{id}/tiba|berangkat`, `POST /v1/bukti-terima`, `POST /v1/unggah-foto` (JPEG maks 500 KB), `POST /v1/insiden`; login sopir memuat `trip_hari_ini`; migrasi `0005_trip_sinkron.sql`, ADR-0004; 21 uji integrasi baru.
 - Lot dan sortir LMB-BE-004: `POST /v1/lot` (kode `L-NNNN` dari server), `POST /v1/lot/{id}/sortir` (gram integer, toleransi 2 persen, Grade C dialihkan dan dicatat), `POST /v1/keranjang/batch` (maks 50, atomik, stok terkunci), `GET /v1/stok-lot`; semua POST idempoten via UUID klien; migrasi `0004_lot_sortir.sql` (menyelaraskan skema templat 0001), ADR-0003; 15 uji integrasi + 3 uji unit.
@@ -15,6 +16,7 @@ Semua perubahan penting lumbung-backend-service dicatat di sini. Format mengikut
 - Fondasi AI-dev v1.0.0: `AGENTS.md`, `CLAUDE.md`, `docs/decisions/` (ADR-0001), `versions/v1.0.0/docs/40-TECHSTACK.md`, `versions/v1.0.0/docs/60-BLAST-RADIUS.md` (tiket LMB-BE-001, 2026-10-14).
 
 ### Diubah
+- Skema permintaan diperketat dan diselaraskan dengan server (bidang tak dikenal dan `null` pada bidang opsional ditolak 422; kredensial rusak di samping `X-Service-Key` 401).
 - Keputusan pemilik produk (ADR-0006): Grade B dibayar 85 persen harga papan (contoh L-8812 menjadi Rp3.524.850); `POST /admin/invoice/{id}/lunas` hanya `admin_keuangan` atau kunci layanan; `.env.example` dengan lima rahasia tanpa nilai; uji skema memastikan berat gram integer (tanpa NUMERIC kg).
 - Pemeriksaan peran kini dilakukan sebelum badan permintaan dibaca (ekstraktor `OperatorGudang`, `PeranSopir`, `AdminGudangAkses`): peran salah selalu 403, bukan 422. Fitur `multipart` pada `axum` diaktifkan untuk unggah foto.
 - Konfigurasi baru `JWT_ED25519_PUBLIC` (PEM SPKI) wajib; `JWT_ED25519_PRIVATE` kini PEM PKCS#8 ed25519. Server lokal OpenAPI menjadi `http://localhost:8080/v1`. Detail galat internal tidak lagi dikirim ke klien (hanya `galat internal`).

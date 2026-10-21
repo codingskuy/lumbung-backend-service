@@ -136,6 +136,8 @@ paths:
       responses:
         '400':
           $ref: '#/components/responses/InputTakTerbaca'
+        '422':
+          $ref: '#/components/responses/Validasi'
         '200':
           description: Token baru.
           content:
@@ -493,6 +495,8 @@ paths:
           $ref: '#/components/responses/TidakDitemukan'
         '500':
           $ref: '#/components/responses/GalatServer'
+        '501':
+          $ref: '#/components/responses/BelumDiimplementasi'
 
   /rencana-setoran:
     post:
@@ -524,6 +528,8 @@ paths:
           $ref: '#/components/responses/BatasLaju'
         '500':
           $ref: '#/components/responses/GalatServer'
+        '501':
+          $ref: '#/components/responses/BelumDiimplementasi'
 
   /pembayaran-saya:
     get:
@@ -1036,7 +1042,7 @@ paths:
           description: Minggu ISO.
           schema:
             type: string
-            pattern: '^\d{4}-W\d{2}$'
+            pattern: '^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$'
             examples: ['2026-W41']
       responses:
         '200':
@@ -1250,6 +1256,8 @@ paths:
           $ref: '#/components/responses/Validasi'
         '500':
           $ref: '#/components/responses/GalatServer'
+        '501':
+          $ref: '#/components/responses/BelumDiimplementasi'
 
 components:
   securitySchemes:
@@ -1301,6 +1309,14 @@ components:
         pattern: '^(L-\d{4,}|TMP-[0-9a-f]{8})$'
         examples: [L-8812]
   responses:
+    BelumDiimplementasi:
+      description: Endpoint terdaftar di kontrak tetapi belum diimplementasi (501); menunggu tiket (ADR-0007).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: belum diimplementasi
     InputTakTerbaca:
       description: Badan permintaan tak terbaca (JSON rusak atau `Content-Type` bukan `application/json`/`multipart/form-data`) (400). Bentuk atau nilai yang salah tetap 422.
       content:
