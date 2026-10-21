@@ -2,7 +2,8 @@
 //!
 //! Variabel wajib:
 //! - `DATABASE_URL`: string koneksi Postgres basis data `lumbung`.
-//! - `JWT_ED25519_PRIVATE`: kunci privat ed25519 (atau HS256 sementara) penanda JWT.
+//! - `JWT_ED25519_PRIVATE`: kunci privat ed25519 (PEM PKCS#8) penanda JWT.
+//! - `JWT_ED25519_PUBLIC`: kunci publik ed25519 (PEM SPKI) pasangannya, untuk verifikasi.
 //! - `DEVICE_API_KEY_GUDANG`: kunci API perangkat gudang.
 //! - `SERVICE_API_KEY`: kunci API antar-layanan.
 
@@ -15,8 +16,10 @@ pub struct Config {
     pub listen_addr: String,
     /// String koneksi Postgres basis data `lumbung`.
     pub database_url: String,
-    /// Kunci penanda JWT (ed25519 privat).
+    /// Kunci penanda JWT (ed25519 privat, PEM PKCS#8).
     pub jwt_private_key: String,
+    /// Kunci verifikasi JWT (ed25519 publik, PEM SPKI).
+    pub jwt_public_key: String,
     /// Kunci API perangkat gudang (timbangan/cetak).
     pub device_api_key: String,
     /// Kunci API antar-layanan (pipeline, AI serving).
@@ -32,6 +35,8 @@ impl Config {
             database_url: std::env::var("DATABASE_URL").context("DATABASE_URL wajib diisi")?,
             jwt_private_key: std::env::var("JWT_ED25519_PRIVATE")
                 .context("JWT_ED25519_PRIVATE wajib diisi")?,
+            jwt_public_key: std::env::var("JWT_ED25519_PUBLIC")
+                .context("JWT_ED25519_PUBLIC wajib diisi")?,
             device_api_key: std::env::var("DEVICE_API_KEY_GUDANG")
                 .context("DEVICE_API_KEY_GUDANG wajib diisi")?,
             service_api_key: std::env::var("SERVICE_API_KEY")
