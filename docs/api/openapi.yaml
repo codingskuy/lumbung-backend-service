@@ -554,7 +554,8 @@ paths:
       summary: Buat lot + timbang kotor
       description: |
         Server menerbitkan kode lot resmi `L-NNNN`; saat offline klien memakai nomor sementara
-        `TMP-{uuid8}` yang dipetakan ke nomor resmi saat sinkron.
+        `TMP-{uuid8}` yang dipetakan ke nomor resmi saat sinkron. Petani harus terdaftar dan `AKTIF`
+        (selain itu `422`). Mencatat timbang `KOTOR`. Hanya peran `admin_gudang` (bearer shift/akses + `X-Device-Key`).
       security:
         - bearerAuth: []
           deviceKey: []
@@ -602,8 +603,10 @@ paths:
       summary: Catat hasil sortir A/B/C
       description: |
         Berat dalam gram integer. Server menolak (`422`) bila total A+B+C menyimpang dari berat
-        kotor lebih dari 2 persen. Grade C tidak masuk rantai dingin dan dicatat alihnya.
-        Gudang menang untuk berat dan grade saat konflik.
+        kotor lebih dari 2 persen (selisih x 100 <= kotor x 2, tanpa pembulatan; contoh L-8812: 100.000 +
+        14.000 + 6.000 = 120.000). Grade C tidak masuk rantai dingin dan dicatat alihnya. Gudang menang untuk
+        berat dan grade saat konflik. `{id}` boleh kode `L-NNNN` atau `TMP-*` dan wajib sama dengan `lot_id`
+        pada badan (`422`). Lot yang sudah disortir dengan `uuid` berbeda `409`.
       security:
         - bearerAuth: []
           deviceKey: []
@@ -652,7 +655,13 @@ paths:
       tags: [Gudang]
       operationId: keranjangBatch
       summary: Catat keranjang dalam batch (maks 50 per request)
-      description: Contoh 25 keranjang x 20 kg = 500 kg. Keranjang berkode permanen `KRJ-001` sampai `KRJ-120`.
+      description: |
+        Contoh 25 keranjang x 20 kg = 500 kg. Keranjang berkode permanen `KRJ-001` sampai `KRJ-120`
+        (keranjang fisik dipakai berulang; satu kode hanya satu isi aktif, bila masih terisi `409`).
+        Atomik: satu item gagal, seluruh batch tidak tersimpan. `422` bila lebih dari 50 atau kosong,
+        kode di luar rentang atau dobel, berat kurang dari atau sama dengan 0, lot belum disortir,
+        stok lot/grade tidak cukup, atau Grade C (ditolak dari rantai dingin, percobaannya dicatat).
+        `uuid` berlaku untuk seluruh batch. Lot tak ditemukan `404`.
       security:
         - bearerAuth: []
           deviceKey: []
@@ -673,6 +682,8 @@ paths:
           $ref: '#/components/responses/TidakSah'
         '403':
           $ref: '#/components/responses/Ditolak'
+        '404':
+          $ref: '#/components/responses/TidakDitemukan'
         '409':
           $ref: '#/components/responses/Konflik'
         '422':
@@ -779,6 +790,7 @@ paths:
       tags: [Gudang]
       operationId: stokLot
       summary: Sisa lot per grade untuk alokasi pesanan
+      description: Hanya Grade A dan B (rantai dingin) dari lot yang sudah disortir, dan hanya yang sisanya lebih dari 0 gram; urut kode lot lalu grade.
       security:
         - bearerAuth: []
           deviceKey: []
@@ -1573,6 +1585,7 @@ components:
           description: Nomor `TMP-*` yang dipetakan (bila ada); cetak ulang tersedia bila nomor berubah.
     BuatLotRequest:
       type: object
+      additionalProperties: false
       required: [uuid, kode_petani, komoditas, tanggal, berat_kotor_g]
       properties:
         uuid:
@@ -1625,6 +1638,7 @@ components:
           type: boolean
     SortirRequest:
       type: object
+      additionalProperties: false
       required: [uuid, lot_id, grade_a_g, grade_b_g, grade_c_g]
       description: Total A+B+C wajib sama dengan berat kotor dalam toleransi 2 persen, jika tidak 422.
       properties:
@@ -1642,6 +1656,7 @@ components:
           type: string
     KeranjangItem:
       type: object
+      additionalProperties: false
       required: [kode, lot_id, grade, berat_g]
       properties:
         kode:
@@ -1655,6 +1670,7 @@ components:
           $ref: '#/components/schemas/Gram'
     KeranjangBatchRequest:
       type: object
+      additionalProperties: false
       required: [uuid, keranjang]
       properties:
         uuid:
