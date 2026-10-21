@@ -228,3 +228,62 @@ pub async fn buat_petani(pool: &PgPool, kode: &str) {
         .await
         .expect("seed petani");
 }
+
+/// Kirim badan biner dengan `content-type` bebas (multipart foto).
+pub async fn kirim_bytes(
+    app: &Router,
+    uri: &str,
+    header: &[(&str, &str)],
+    content_type: &str,
+    badan: Vec<u8>,
+) -> Resp {
+    let mut b = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("content-type", content_type);
+    for (k, v) in header {
+        b = b.header(*k, *v);
+    }
+    let res = app
+        .clone()
+        .oneshot(b.body(Body::from(badan)).unwrap())
+        .await
+        .expect("respons");
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    Resp {
+        status,
+        json: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        headers,
+    }
+}
+
+/// Badan multipart `uuid` + `berkas` (JPEG); mengembalikan (content-type, badan).
+pub fn multipart_foto(uuid: Option<&str>, berkas: &[u8]) -> (String, Vec<u8>) {
+    let batas = "BATAS-UJI-LUMBUNG";
+    let mut badan = Vec::new();
+    if let Some(u) = uuid {
+        badan.extend_from_slice(
+            format!("--{batas}\r\nContent-Disposition: form-data; name=\"uuid\"\r\n\r\n{u}\r\n")
+                .as_bytes(),
+        );
+    }
+    badan.extend_from_slice(
+        format!(
+            "--{batas}\r\nContent-Disposition: form-data; name=\"berkas\"; filename=\"f.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    badan.extend_from_slice(berkas);
+    badan.extend_from_slice(format!("\r\n--{batas}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={batas}"), badan)
+}
+
+/// JPEG sintetis utuh (SOI + isi + EOI) sebesar `ukuran` byte.
+pub fn jpeg_uji(ukuran: usize) -> Vec<u8> {
+    let mut v = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    v.resize(ukuran.saturating_sub(2).max(4), 0x11);
+    v.extend_from_slice(&[0xFF, 0xD9]);
+    v
+}
