@@ -1,0 +1,293 @@
+{
+  "consumer": {
+    "name": "lumbung-web"
+  },
+  "interactions": [
+    {
+      "description": "permintaan papan harga publik",
+      "providerStates": [
+        {
+          "name": "papan harga minggu berjalan sudah terbit"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Accept": "application/json"
+        },
+        "method": "GET",
+        "path": "/v1/publik/papan-harga"
+      },
+      "response": {
+        "body": {
+          "bawang": {
+            "a": 28000,
+            "b": 23500
+          },
+          "berlaku": "2026-10-06 s.d. 2026-10-12",
+          "cabai": {
+            "a": 31500,
+            "b": 26500
+          },
+          "fee": {
+            "dekat": 1500,
+            "jauh": 2500
+          },
+          "kangkung": {
+            "a": 6000,
+            "b": 5000
+          }
+        },
+        "headers": {
+          "Cache-Control": "public, max-age=900",
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.bawang.a": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.bawang.b": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.berlaku": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.cabai.a": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.cabai.b": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.kangkung.a": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.kangkung.b": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^application\\/json"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "permintaan papan harga publik sebelum terbit",
+      "providerStates": [
+        {
+          "name": "papan harga minggu berjalan belum terbit"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Accept": "application/json"
+        },
+        "method": "GET",
+        "path": "/v1/publik/papan-harga"
+      },
+      "response": {
+        "body": {
+          "error": "tidak ditemukan"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.error": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^application\\/json"
+                }
+              ]
+            }
+          }
+        },
+        "status": 404
+      }
+    },
+    {
+      "description": "permintaan profil publik",
+      "providerStates": [
+        {
+          "name": "profil Lumbung tersedia"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Accept": "application/json"
+        },
+        "method": "GET",
+        "path": "/v1/publik/profil"
+      },
+      "response": {
+        "body": {
+          "deskripsi": "Agregasi panen",
+          "kontak_kemitraan": "mitra@lumbung.id",
+          "nama": "Lumbung"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.deskripsi": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.kontak_kemitraan": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.nama": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^application\\/json"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      }
+    },
+    {
+      "description": "permintaan profil publik saat galat internal",
+      "providerStates": [
+        {
+          "name": "basis data tidak tersedia"
+        }
+      ],
+      "request": {
+        "headers": {
+          "Accept": "application/json"
+        },
+        "method": "GET",
+        "path": "/v1/publik/profil"
+      },
+      "response": {
+        "body": {
+          "error": "galat internal"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "matchingRules": {
+          "body": {
+            "$.error": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^application\\/json"
+                }
+              ]
+            }
+          }
+        },
+        "status": 500
+      }
+    }
+  ],
+  "metadata": {
+    "pact-js": {
+      "version": "17.1.4"
+    },
+    "pactRust": {
+      "ffi": "0.5.8",
+      "models": "1.3.16"
+    },
+    "pactSpecification": {
+      "version": "3.0.0"
+    }
+  },
+  "provider": {
+    "name": "lumbung-backend-service"
+  }
+}

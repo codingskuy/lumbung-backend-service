@@ -1,0 +1,8 @@
+{
+  "name": "lumbung-backend-service-pact-provider",
+  "private": true,
+  "type": "module",
+  "description": "Harness verifikasi provider Pact untuk lumbung-backend-service (LMB-BE-TEST-PACT)",
+  "scripts": { "verifikasi": "node verifikasi.mjs" },
+  "dependencies": { "@pact-foundation/pact": "17.1.4" }
+}

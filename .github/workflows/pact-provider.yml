@@ -1,0 +1,45 @@
+name: Pact provider (manual)
+
+# Verifikasi provider Pact terhadap berkas di contract/pact/pacts (LMB-BE-TEST-PACT). Hanya manual.
+on: workflow_dispatch
+
+jobs:
+  pact:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumbung
+          POSTGRES_PASSWORD: lumbung
+          POSTGRES_DB: lumbung_uji
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lumbung" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://lumbung:lumbung@localhost:5432/lumbung_uji
+      LISTEN_ADDR: 127.0.0.1:8080
+      DEVICE_API_KEY_GUDANG: kunci-gudang-ci
+      SERVICE_API_KEY: kunci-layanan-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo build
+      - name: Jalankan server
+        run: |
+          openssl genpkey -algorithm ed25519 -out /tmp/priv.pem
+          openssl pkey -in /tmp/priv.pem -pubout -out /tmp/pub.pem
+          export JWT_ED25519_PRIVATE="$(cat /tmp/priv.pem)" JWT_ED25519_PUBLIC="$(cat /tmp/pub.pem)"
+          nohup ./target/debug/lumbung-backend-service > server.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf localhost:8080/healthz && break; sleep 1; done
+      - name: Verifikasi provider
+        working-directory: contract/pact
+        env:
+          SERVICE_KEY: kunci-layanan-ci
+          PROVIDER_URL: http://127.0.0.1:8080
+        run: |
+          npm ci --ignore-scripts
+          node verifikasi.mjs
