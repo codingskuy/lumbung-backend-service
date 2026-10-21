@@ -187,3 +187,44 @@ pub async fn masuk(app: &Router, akun: &str) -> (String, String) {
 pub fn bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
+
+/// Sesi operator gudang: token shift + `X-Device-Key`.
+pub struct SesiGudang {
+    pub auth: String,
+}
+
+impl SesiGudang {
+    /// Header untuk endpoint desktop gudang.
+    pub fn h(&self) -> [(&str, &str); 2] {
+        [
+            ("authorization", self.auth.as_str()),
+            ("x-device-key", KUNCI_GUDANG),
+        ]
+    }
+}
+
+/// Seed operator `OPR-SORTIR-1` lalu login shift lewat `/v1/gudang/masuk`.
+pub async fn masuk_gudang(app: &Router, pool: &PgPool) -> SesiGudang {
+    buat_pengguna(pool, "OPR-SORTIR-1", Peran::AdminGudang).await;
+    let r = kirim(
+        app,
+        "POST",
+        "/v1/gudang/masuk",
+        &[("x-device-key", KUNCI_GUDANG)],
+        Some(serde_json::json!({"operator": "OPR-SORTIR-1", "pin": PIN_UJI})),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "shift gagal: {}", r.json);
+    SesiGudang {
+        auth: bearer(r.json["token"].as_str().unwrap()),
+    }
+}
+
+/// Seed petani aktif.
+pub async fn buat_petani(pool: &PgPool, kode: &str) {
+    sqlx::query("INSERT INTO petani (kode, nama) VALUES ($1, $1)")
+        .bind(kode)
+        .execute(pool)
+        .await
+        .expect("seed petani");
+}
