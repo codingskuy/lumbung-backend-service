@@ -446,8 +446,10 @@ async fn offline_lebih_dari_3x24_jam_mengunci_surat_jalan_tetapi_bukan_timbang_d
 #[sqlx::test]
 async fn payload_buruk_ditolak_per_rekaman_dan_jenis_asing_ditolak_seluruhnya(pool: PgPool) {
     let u = siapkan(pool).await;
+    // Format nomor_sementara salah = pelanggaran skema: 422 untuk seluruh request.
     let (_, tmp_buruk) = rek("lot", Some("TMP-XYZ"), lot_payload(1_000));
-    let (_, bukan_objek) = rek("lot", None, json!([1, 2]));
+    let r = u.sinkron(vec![tmp_buruk]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
     let (_, bidang_asing) = rek(
         "lot",
         None,
@@ -463,8 +465,6 @@ async fn payload_buruk_ditolak_per_rekaman_dan_jenis_asing_ditolak_seluruhnya(po
     let (_, baik) = rek("lot", None, lot_payload(1_000));
     let r = u
         .sinkron(vec![
-            tmp_buruk,
-            bukan_objek,
             bidang_asing,
             uuid_beda,
             berat_negatif,
@@ -474,9 +474,9 @@ async fn payload_buruk_ditolak_per_rekaman_dan_jenis_asing_ditolak_seluruhnya(po
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     let s = Uji::ringkas(&r);
-    assert!(s[..6].iter().all(|(st, _)| st == "DITOLAK"), "{}", r.json);
-    assert_eq!(s[6].0, "DITERIMA");
-    for i in 0..6 {
+    assert!(s[..4].iter().all(|(st, _)| st == "DITOLAK"), "{}", r.json);
+    assert_eq!(s[4].0, "DITERIMA");
+    for i in 0..4 {
         assert!(
             r.json["hasil"][i]["pesan"].is_string(),
             "pesan penolakan #{i}"
@@ -484,7 +484,11 @@ async fn payload_buruk_ditolak_per_rekaman_dan_jenis_asing_ditolak_seluruhnya(po
     }
     assert_eq!(u.hitung("SELECT count(*) FROM lot").await, 1);
 
-    // Jenis tak dikenal merusak skema permintaan: 422 untuk seluruh batch.
+    // Payload bukan objek dan jenis tak dikenal merusak skema permintaan: 422 untuk seluruh batch.
+    let (_, bukan_objek) = rek("lot", None, json!([1, 2]));
+    let r = u.sinkron(vec![bukan_objek]).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
+
     let (_, asing) = rek("pesanan", None, json!({}));
     let r = u.sinkron(vec![asing]).await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
