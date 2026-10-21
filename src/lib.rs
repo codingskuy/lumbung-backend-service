@@ -14,8 +14,11 @@ pub mod keranjang;
 pub mod lot;
 pub mod papan_harga;
 pub mod routes;
+pub mod sinkron;
 pub mod sistem;
+pub mod sopir;
 pub mod state;
+pub mod trip;
 pub mod urutan;
 pub mod waktu;
 
