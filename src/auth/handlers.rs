@@ -65,6 +65,9 @@ pub struct TokenResponse {
     pub berlaku_sampai: DateTime<Utc>,
     /// Peran pengguna.
     pub peran: String,
+    /// Kode trip hari ini; hanya untuk peran sopir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trip_hari_ini: Option<Vec<String>>,
 }
 
 /// Respons `TokenShiftResponse`.
@@ -216,7 +219,7 @@ async fn simpan_refresh(
     Ok(format!("{id}.{rahasia}"))
 }
 
-fn token_response(
+async fn token_response(
     state: &AppState,
     id: Uuid,
     akun: &str,
@@ -225,11 +228,18 @@ fn token_response(
     refresh_token: String,
 ) -> AppResult<TokenResponse> {
     let (token, klaim) = state.jwt.terbitkan_akses(id, akun, peran, keluarga)?;
+    let trip_hari_ini = if Peran::dari_str(peran) == Some(Peran::Sopir) {
+        let mut conn = state.pool.acquire().await?;
+        Some(crate::trip::kode_trip_hari_ini(&mut conn, akun).await?)
+    } else {
+        None
+    };
     Ok(TokenResponse {
         token,
         refresh_token,
         berlaku_sampai: exp_sebagai_waktu(&klaim),
         peran: peran.to_string(),
+        trip_hari_ini,
     })
 }
 
@@ -252,9 +262,9 @@ pub async fn masuk(
     )
     .await?;
     tx.commit().await?;
-    Ok(Json(token_response(
-        &state, a.id, &a.akun, &a.peran, keluarga, refresh,
-    )?))
+    Ok(Json(
+        token_response(&state, a.id, &a.akun, &a.peran, keluarga, refresh).await?,
+    ))
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -336,14 +346,17 @@ pub async fn refresh(
     )
     .await?;
     tx.commit().await?;
-    Ok(Json(token_response(
-        &state,
-        baris.pengguna_id,
-        &baris.akun,
-        &baris.peran,
-        baris.family_id,
-        baru,
-    )?))
+    Ok(Json(
+        token_response(
+            &state,
+            baris.pengguna_id,
+            &baris.akun,
+            &baris.peran,
+            baris.family_id,
+            baru,
+        )
+        .await?,
+    ))
 }
 
 /// `POST /auth/keluar`: hapus keluarga refresh dari sesi ini (atau cabut sesi shift).

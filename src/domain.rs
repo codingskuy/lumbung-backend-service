@@ -56,6 +56,34 @@ impl Grade {
     }
 }
 
+/// Zona fee logistik (BR-301).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Zona {
+    /// Kurang dari 15 km: Rp1.500 per kg.
+    Dekat,
+    /// 15 sampai 25 km: Rp2.500 per kg.
+    Jauh,
+}
+
+impl Zona {
+    /// Teks basis data/kontrak.
+    pub fn sebagai_str(self) -> &'static str {
+        match self {
+            Zona::Dekat => "DEKAT",
+            Zona::Jauh => "JAUH",
+        }
+    }
+
+    /// Tarif fee per kg zona ini (rupiah).
+    pub fn tarif_per_kg(self) -> i64 {
+        match self {
+            Zona::Dekat => tarif::FEE_DEKAT_PER_KG,
+            Zona::Jauh => tarif::FEE_JAUH_PER_KG,
+        }
+    }
+}
+
 /// Hasil aksi idempoten (`AksiHasil` pada kontrak): `duplikat` true bila UUID klien sudah diproses.
 #[derive(Debug, Serialize)]
 pub struct AksiHasil {
