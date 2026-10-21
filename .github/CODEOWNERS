@@ -1,0 +1,8 @@
+# Pemilik kode lumbung-backend-service. Satu pemilik default sampai tim backend terbentuk;
+# ganti dengan tim (mis. @Coding-Skuy/lumbung-backend) saat tersedia.
+*                          @codingskuy
+/docs/api/                 @codingskuy
+/docs/decisions/           @codingskuy
+/migrations/               @codingskuy
+/src/auth/                 @codingskuy
+/.github/                  @codingskuy
