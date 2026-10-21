@@ -17,6 +17,7 @@ target
 # Env dan rahasia (DATABASE_URL lumbung, JWT, API key)
 .env
 .env.*
+!.env.example
 sqlx-data.json.bak
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
