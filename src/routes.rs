@@ -14,7 +14,7 @@ use tower_http::{cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
 use crate::{
     auth::handlers as auth, invoice, keranjang, lot, papan_harga, pembayaran, sinkron, sistem,
-    sopir, state::AppState, trip,
+    sopir, state::AppState, tarif, trip,
 };
 
 /// Endpoint kesehatan infra: menjawab `ok` hanya bila query ringan ke DB berhasil.
@@ -50,6 +50,7 @@ fn api_v1() -> Router<AppState> {
         .route("/papan-harga", get(papan_harga::petani))
         .route("/publik/papan-harga", get(papan_harga::publik))
         .route("/admin/papan-harga", post(papan_harga::terbit))
+        .route("/admin/tarif-fee", get(tarif::daftar).post(tarif::terbit))
 }
 
 /// Router lengkap layanan.

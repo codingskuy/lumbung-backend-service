@@ -227,6 +227,7 @@ pub async fn terbit(
     }
 
     let selesai = req.berlaku_mulai + Duration::days(6);
+    let tarif_papan = crate::tarif::tarif_pada(&mut tx, req.berlaku_mulai).await?;
     let lembar = json!(req
         .referensi
         .iter()
@@ -248,8 +249,8 @@ pub async fn terbit(
     .bind(req.uuid)
     .bind(req.berlaku_mulai)
     .bind(selesai)
-    .bind(tarif::FEE_DEKAT_PER_KG)
-    .bind(tarif::FEE_JAUH_PER_KG)
+    .bind(tarif_papan.dekat)
+    .bind(tarif_papan.jauh)
     .bind(lembar)
     .bind(&audit_id)
     .bind(akun.aktor())

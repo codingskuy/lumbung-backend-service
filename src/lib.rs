@@ -21,6 +21,7 @@ pub mod sinkron;
 pub mod sistem;
 pub mod sopir;
 pub mod state;
+pub mod tarif;
 pub mod trip;
 pub mod urutan;
 pub mod waktu;
