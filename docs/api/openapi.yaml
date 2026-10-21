@@ -33,8 +33,8 @@ info:
 servers:
   - url: https://api.lumbung.chefgenie.id/v1
     description: Produksi
-  - url: http://localhost:8080
-    description: Lokal (cargo run)
+  - url: http://localhost:8080/v1
+    description: Lokal (cargo run); semua rute API ada di bawah awalan /v1 (selain /healthz untuk infra).
 tags:
   - name: Sistem
     description: Kesehatan layanan.
@@ -83,7 +83,9 @@ paths:
       description: |
         Akun peran (contoh `sopir-02`, `PTN-007`) + PIN 6 digit. Tiga kali salah PIN mengunci akun
         15 menit. Mengembalikan JWT akses 15 menit (ed25519, audiens `lumbung`) dan refresh 7 hari.
-        Tidak ada login hanya dengan nama; 1 orang 1 akun.
+        Tidak ada login hanya dengan nama; 1 orang 1 akun. PIN salah dan akun tidak ada sama-sama
+        `401` (tanpa membocorkan keberadaan akun). Akun yang sedang terkunci mendapat `429` dengan
+        pesan `akun terkunci sampai <waktu>` walau PIN benar. Format PIN salah `422`, JSON rusak `400`.
       security: []
       parameters:
         - $ref: '#/components/parameters/PerangkatId'
@@ -108,7 +110,7 @@ paths:
         '422':
           $ref: '#/components/responses/Validasi'
         '429':
-          $ref: '#/components/responses/BatasLaju'
+          $ref: '#/components/responses/AkunTerkunci'
         '500':
           $ref: '#/components/responses/GalatServer'
 
@@ -121,6 +123,7 @@ paths:
         Menukar refresh token (7 hari) dengan JWT akses baru dan refresh baru (rotasi). Bila refresh
         token lama dipakai dua kali (reuse-detection), seluruh keluarga refresh pengguna dicabut dan
         pengguna wajib masuk ulang (`401`). Klien mobile me-refresh otomatis 1 kali lalu meminta login ulang.
+        Refresh token berformat opak `<id>.<rahasia>`; klien menyimpannya apa adanya.
       security: []
       requestBody:
         required: true
@@ -145,7 +148,7 @@ paths:
       tags: [Auth]
       operationId: authKeluar
       summary: Keluar (cabut keluarga refresh)
-      description: Menghapus keluarga refresh dari basis data; token akses kedaluwarsa sendiri dalam 15 menit.
+      description: Menghapus keluarga refresh sesi ini dari basis data (sesi perangkat lain tidak terpengaruh); token akses kedaluwarsa sendiri dalam 15 menit.
       responses:
         '204':
           description: Berhasil keluar.
@@ -162,7 +165,8 @@ paths:
       description: |
         Kredensial perangkat gudang terdaftar (`X-Device-Key`) + PIN operator per shift (contoh
         `OPR-SORTIR-1`). Mengembalikan token shift berumur 12 jam. Token shift tidak boleh keluar dari
-        PC gudang. Tiga salah PIN mengunci 15 menit dan memberi tahu Kepala Agregasi.
+        PC gudang. Tiga salah PIN mengunci 15 menit (`429`) dan tercatat di audit (`akun_terkunci`) untuk
+        Kepala Agregasi. Kunci perangkat salah atau kedaluwarsa `401`; akun yang bukan operator gudang `403`.
       security:
         - deviceKey: []
       parameters:
@@ -190,7 +194,7 @@ paths:
         '422':
           $ref: '#/components/responses/Validasi'
         '429':
-          $ref: '#/components/responses/BatasLaju'
+          $ref: '#/components/responses/AkunTerkunci'
         '500':
           $ref: '#/components/responses/GalatServer'
 
@@ -199,7 +203,7 @@ paths:
       tags: [Gudang]
       operationId: gudangKeluar
       summary: Tutup shift gudang
-      description: Wajib dipanggil tiap tutup shift 14.00; mencabut token shift.
+      description: Wajib dipanggil tiap tutup shift 14.00; mencabut token shift. Hanya token shift yang diterima (token akses biasa `401`).
       security:
         - bearerAuth: []
           deviceKey: []
@@ -1151,8 +1155,9 @@ components:
       in: header
       name: X-Device-Key
       description: |
-        API key perangkat gudang terdaftar (`DEVICE_API_KEY_GUDANG`). Hak minimal; tidak boleh membaca
-        data pengguna. Rotasi 90 hari, kunci lama diberi tenggang 7 hari. Lihat `docs/auth.md`.
+        API key perangkat gudang terdaftar (`DEVICE_API_KEY_GUDANG`). Hak minimal: tulis `timbangan` dan
+        `fee.status_cetak`; tidak boleh membaca data pengguna dan tidak menggantikan bearer. Berlaku 90 hari;
+        saat rotasi kunci lama diberi tenggang 7 hari. Lihat `docs/auth.md`.
     serviceKey:
       type: apiKey
       in: header
@@ -1249,6 +1254,14 @@ components:
             $ref: '#/components/schemas/Galat'
           example:
             error: batas laju terlampaui
+    AkunTerkunci:
+      description: Akun terkunci 15 menit setelah 3 kali salah PIN (429); pesan memuat waktu berakhirnya kunci.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: akun terkunci sampai 2026-10-10T07:30:00+00:00
     GalatServer:
       description: Galat basis data atau internal (500).
       content:
