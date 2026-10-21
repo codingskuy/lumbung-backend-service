@@ -75,6 +75,15 @@ impl Zona {
         }
     }
 
+    /// Urai dari teks basis data.
+    pub fn dari_str(nilai: &str) -> Option<Self> {
+        match nilai {
+            "DEKAT" => Some(Zona::Dekat),
+            "JAUH" => Some(Zona::Jauh),
+            _ => None,
+        }
+    }
+
     /// Tarif fee per kg zona ini (rupiah).
     pub fn tarif_per_kg(self) -> i64 {
         match self {

@@ -25,6 +25,7 @@ use crate::{
     domain::{tarif, AksiHasil, Hasil, Konteks, Zona},
     error::{AppError, AppResult},
     extract::ApiJson,
+    fee::{self, FeeJson},
     keranjang::kode_keranjang_valid,
     state::AppState,
     urutan, waktu,
@@ -75,6 +76,8 @@ pub struct TitikBaru {
     pub zona: Zona,
     /// Pesanan `PSO-YYYYMMDD-NNN` yang dilayani titik ini (dasar fee, LMB-BE-006).
     pub pesanan: Option<String>,
+    /// Pembeli yang ditagih fee (invoice mingguan per pembeli), maksimal 64 karakter.
+    pub pembeli: Option<String>,
     /// Keranjang (subset `keranjang` trip) yang diantar ke titik ini.
     pub keranjang: Option<Vec<String>>,
 }
@@ -170,6 +173,10 @@ pub struct SuratJalanJson {
     pub keranjang: Vec<KeranjangSj>,
     /// Nomor `TMP-*` yang dipetakan (cetak ulang tersedia bila ada).
     pub nomor_sementara: Option<String>,
+    /// Total fee seluruh pesanan pada surat jalan (rupiah).
+    pub fee_total: i64,
+    /// Fee per pesanan (dihitung server).
+    pub rincian_fee: Vec<FeeJson>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -292,6 +299,7 @@ fn validasi_trip(req: &BuatTripRequest) -> AppResult<()> {
         }
         let mut id_titik = HashSet::new();
         let mut ditetapkan = HashSet::new();
+        let mut pesanan_dilihat = HashSet::new();
         for t in titik {
             let id = t.id.trim();
             if id.is_empty() || id.len() > 32 {
@@ -308,6 +316,19 @@ fn validasi_trip(req: &BuatTripRequest) -> AppResult<()> {
                         "pesanan {p} harus berformat PSO-YYYYMMDD-NNN"
                     )));
                 }
+                if !pesanan_dilihat.insert(p.as_str()) {
+                    return Err(AppError::Unprocessable(format!(
+                        "pesanan {p} dobel pada beberapa titik"
+                    )));
+                }
+            }
+            if t.pembeli
+                .as_deref()
+                .is_some_and(|p| p.trim().is_empty() || p.len() > 64)
+            {
+                return Err(AppError::Unprocessable(
+                    "pembeli tidak boleh kosong dan maksimal 64 karakter".into(),
+                ));
             }
             for k in t.keranjang.iter().flatten() {
                 if !dilihat.contains(k.as_str()) {
@@ -438,14 +459,15 @@ pub async fn buat_trip_tx(
         .await?;
     for (i, t) in req.titik.iter().flatten().enumerate() {
         sqlx::query(
-            "INSERT INTO trip_titik (trip_id, titik_id, urutan, zona, pesanan)
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO trip_titik (trip_id, titik_id, urutan, zona, pesanan, pembeli)
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(trip_id)
         .bind(t.id.trim())
         .bind(i as i32 + 1)
         .bind(t.zona.sebagai_str())
         .bind(&t.pesanan)
+        .bind(t.pembeli.as_deref().map(str::trim))
         .execute(&mut *sp)
         .await?;
         for k in t.keranjang.iter().flatten() {
@@ -578,26 +600,31 @@ pub async fn terbit_surat_jalan_tx(
     let urut = urutan::berikutnya(&mut *conn, "SJ", tanggal).await?;
     let nomor = urutan::format_nomor("SJ", tanggal, urut);
     let mut sp = conn.begin().await?;
-    match sqlx::query(
+    let sj_id: Uuid = match sqlx::query_scalar(
         "INSERT INTO surat_jalan (uuid_klien, trip_id, nomor, nomor_sementara, diterbitkan_oleh)
-         VALUES ($1, $2, $3, $4, $5)",
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(uuid)
     .bind(trip.id)
     .bind(&nomor)
     .bind(nomor_sementara)
     .bind(&ctx.akun)
-    .execute(&mut *sp)
+    .fetch_one(&mut *sp)
     .await
     {
-        Ok(_) => sp.commit().await?,
+        Ok(id) => {
+            sp.commit().await?;
+            id
+        }
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
             return Err(AppError::Conflict(
                 "nomor sementara sudah dipakai surat jalan lain".into(),
             ));
         }
         Err(e) => return Err(e.into()),
-    }
+    };
+    let rincian_fee = fee::catat_fee_surat_jalan(conn, sj_id, trip.id, tanggal).await?;
+    let fee_total = rincian_fee.iter().map(|f| f.nominal).sum();
     let keranjang = sqlx::query_as::<_, KeranjangSj>(
         "SELECT kode, grade, berat_g FROM keranjang_isi WHERE trip_id = $1 ORDER BY kode",
     )
@@ -609,6 +636,8 @@ pub async fn terbit_surat_jalan_tx(
         trip: trip.kode,
         keranjang,
         nomor_sementara: nomor_sementara.map(str::to_string),
+        fee_total,
+        rincian_fee,
     }))
 }
 
