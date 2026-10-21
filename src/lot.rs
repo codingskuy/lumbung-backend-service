@@ -400,6 +400,7 @@ pub async fn sortir_tx(
         .bind(req.grade_c_g)
         .fetch_one(&mut *conn)
         .await?;
+    crate::pembayaran::catat_sortir(conn, &baru).await?;
     Ok(Hasil::Baru(baru))
 }
 
