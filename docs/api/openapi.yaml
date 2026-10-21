@@ -252,6 +252,10 @@ paths:
       tags: [Sopir]
       operationId: titikTiba
       summary: Catat tiba di titik
+      description: |
+        Hanya sopir yang ditugaskan pada trip (selain itu `403`, dicatat). `{id}` harus sama dengan `titik_id`
+        pada badan. Tiba pertama mengubah trip menjadi `BERJALAN`. Kejadian ulang dengan `uuid` lain menimpa
+        waktu (lapangan menang untuk posisi).
       parameters:
         - $ref: '#/components/parameters/TitikId'
         - $ref: '#/components/parameters/PerangkatId'
@@ -293,6 +297,9 @@ paths:
       tags: [Sopir]
       operationId: titikBerangkat
       summary: Catat berangkat dari titik
+      description: |
+        Wajib sudah tiba di titik itu dan waktu tidak lebih awal dari waktu tiba (selain itu `422`). Setelah semua
+        titik berangkat trip menjadi `SELESAI` dan keranjang dikosongkan.
       parameters:
         - $ref: '#/components/parameters/TitikId'
         - $ref: '#/components/parameters/PerangkatId'
@@ -329,7 +336,10 @@ paths:
       summary: Kirim bukti terima (metadata JSON)
       description: |
         Metadata + UUID; foto diunggah terpisah lewat `POST /unggah-foto` (maksimal 4 foto per bukti,
-        masing-masing JPEG maksimal 500 KB). Resolusi konflik: lapangan menang untuk bukti terima dan posisi.
+        masing-masing JPEG maksimal 500 KB; minimal satu foto atau `tanda_tangan`). Resolusi konflik: lapangan
+        menang untuk bukti terima dan posisi: bukti baru untuk titik yang sama dengan `uuid` lain diterima dan
+        berlaku, bukti lama disimpan sebagai riwayat dan penggantian dicatat sebagai insiden `konflik_sinkron`.
+        Keranjang titik itu dikosongkan; lot menjadi `DITERIMA` bila seluruh keranjangnya selesai.
       parameters:
         - $ref: '#/components/parameters/PerangkatId'
       requestBody:
@@ -363,7 +373,10 @@ paths:
       tags: [Sopir]
       operationId: unggahFoto
       summary: Unggah foto bukti (JPEG maks 500 KB)
-      description: Dipisah dari JSON agar hemat kuota. Foto disimpan 1 tahun lalu hanya metadata.
+      description: |
+        Dipisah dari JSON agar hemat kuota. Foto disimpan 1 tahun lalu hanya metadata. `uuid` menjadi `foto_id`
+        (idempoten: kirim ulang `200`). Berkas harus JPEG utuh (diawali FFD8FF dan diakhiri FFD9) berukuran 1 sampai
+        512.000 byte (500 KB); pelanggaran `422`. Badan permintaan di atas 1 MiB ditolak `413` sebelum dibaca.
       parameters:
         - $ref: '#/components/parameters/PerangkatId'
       requestBody:
@@ -415,7 +428,7 @@ paths:
       tags: [Sopir]
       operationId: buatInsiden
       summary: Laporkan insiden (keterlambatan, konflik, dll.)
-      description: ID insiden berformat `INS-YYYYMMDD-NNN`. Foto opsional.
+      description: ID insiden berformat `INS-YYYYMMDD-NNN` (urutan per hari WIB). Foto opsional (maksimal 4, harus sudah diunggah).
       parameters:
         - $ref: '#/components/parameters/PerangkatId'
       requestBody:
@@ -698,7 +711,10 @@ paths:
       tags: [Gudang]
       operationId: buatTrip
       summary: Susun trip
-      description: Kode trip `TRIP-RUTE-NNN` (contoh `TRIP-UT-041`); kas jalan Rp300.000 per trip.
+      description: |
+        Kode trip `TRIP-RUTE-NNN` dari penghitung per rute (UTARA `UT`, SELATAN `SL`, KOTA `KT`; contoh
+        `TRIP-UT-041`); kas jalan Rp300.000 per trip. Keranjang yang dimuat harus sudah dicatat lewat
+        `/keranjang/batch` dan belum berada di trip lain (selain itu `422`); lot terkait menjadi `DIMUAT`.
       security:
         - bearerAuth: []
           deviceKey: []
@@ -737,7 +753,10 @@ paths:
       tags: [Gudang]
       operationId: terbitSuratJalan
       summary: Terbitkan surat jalan
-      description: Server menerbitkan nomor unik `SJ-YYYYMMDD-NNN`; nomor sementara `TMP-*` dipetakan otomatis dan cetak ulang tersedia bila nomor berubah.
+      description: |
+        Server menerbitkan nomor unik `SJ-YYYYMMDD-NNN` (urutan per hari WIB); nomor sementara `TMP-*` dipetakan
+        otomatis dan cetak ulang tersedia bila nomor berubah. Satu surat jalan per trip: `uuid` berbeda untuk
+        trip yang sama `409`. Fee per pesanan ditambahkan di LMB-BE-006.
       security:
         - bearerAuth: []
           deviceKey: []
@@ -745,7 +764,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Kode trip.
+          description: Kode trip, atau UUID klien trip itu (klien offline belum mengetahui kode resmi).
           schema:
             type: string
             examples: [TRIP-UT-041]
@@ -824,7 +843,13 @@ paths:
       description: |
         Rekaman diproses berurutan FIFO. Nomor sementara `TMP-*` dipetakan ke nomor resmi pada respons.
         Batch 25 keranjang (<100 KB) tersinkron <30 detik pada 1 Mbps. Offline lebih dari 3x24 jam
-        mengunci penerbitan surat jalan baru (timbang dan bukti tetap diizinkan).
+        mengunci penerbitan surat jalan baru (timbang dan bukti tetap diizinkan): rekaman `surat_jalan` dengan
+        `dibuat_pada` lebih dari 72 jam lalu berstatus `DITOLAK`. Setiap rekaman dalam transaksi bagian sendiri
+        (savepoint): satu rekaman gagal tidak membatalkan yang lain; galat basis data membatalkan seluruh request
+        (kirim ulang aman, semua idempoten). Status per rekaman: `DITERIMA`, `DUPLIKAT` (UUID sudah diproses),
+        `KONFLIK` (gudang menang untuk berat dan grade; dicatat sebagai insiden `konflik_sinkron`), `DITOLAK`
+        (validasi gagal; `pesan` berisi alasan). Bukti terima yang bentrok: lapangan menang (bukti terbaru berlaku,
+        konflik dicatat). Lebih dari 200 rekaman atau kosong `422`.
       security:
         - bearerAuth: []
           deviceKey: []
@@ -1529,13 +1554,44 @@ components:
         status:
           type: string
           enum: [DISUSUN, BERJALAN, SELESAI]
+          description: DISUSUN saat dibuat, BERJALAN pada tiba pertama, SELESAI saat semua titik sudah berangkat.
+        tanggal:
+          type: string
+          format: date
+          description: Tanggal tugas (WIB). Tambahan opsional v1.0.0 (lihat ADR-0004).
+        sopir:
+          type: string
+          description: Akun sopir yang bertugas bila ditugaskan. Tambahan opsional v1.0.0 (lihat ADR-0004).
         titik:
           type: array
           items:
             $ref: '#/components/schemas/Titik'
+    TitikBaru:
+      type: object
+      required: [id, zona]
+      additionalProperties: false
+      description: Titik tujuan trip (tambahan opsional v1.0.0, lihat ADR-0004); zona menentukan tarif fee.
+      properties:
+        id:
+          type: string
+          maxLength: 32
+          examples: [PWN-1]
+        zona:
+          $ref: '#/components/schemas/Zona'
+        pesanan:
+          type: string
+          pattern: '^PSO-\d{8}-\d{3}$'
+          description: Pesanan yang dilayani titik ini (dasar fee per pesanan).
+        keranjang:
+          type: array
+          description: Subset keranjang trip yang diantar ke titik ini.
+          items:
+            type: string
+            pattern: '^KRJ-\d{3}$'
     BuatTripRequest:
       type: object
       required: [uuid, rute, kendaraan, keranjang]
+      additionalProperties: false
       properties:
         uuid:
           $ref: '#/components/schemas/UuidKlien'
@@ -1544,14 +1600,30 @@ components:
           enum: [UTARA, SELATAN, KOTA]
         kendaraan:
           type: string
+          maxLength: 64
         kas_jalan:
           $ref: '#/components/schemas/Rupiah'
+          description: Bila dikirim harus 300000 (nilai tetap FSD/20); bila kosong server memakai 300000.
         keranjang:
           type: array
-          description: Kode keranjang yang dimuat.
+          description: Kode keranjang yang dimuat (minimal 1, tanpa dobel; harus berisi aktif dan belum di trip lain).
+          minItems: 1
           items:
             type: string
             pattern: '^KRJ-\d{3}$'
+        tanggal:
+          type: string
+          format: date
+          description: Tanggal tugas; bawaan hari ini (WIB). Tambahan opsional v1.0.0 (ADR-0004).
+        sopir:
+          type: string
+          description: Akun sopir yang bertugas; wajib akun sopir aktif. Tambahan opsional v1.0.0 (ADR-0004).
+        titik:
+          type: array
+          maxItems: 20
+          description: Titik tujuan berurutan. Tambahan opsional v1.0.0 (ADR-0004).
+          items:
+            $ref: '#/components/schemas/TitikBaru'
     SuratJalan:
       type: object
       required: [nomor, trip, keranjang]
@@ -1696,6 +1768,7 @@ components:
     SinkronRekaman:
       type: object
       required: [uuid, jenis, payload]
+      additionalProperties: false
       properties:
         uuid:
           $ref: '#/components/schemas/UuidKlien'
@@ -1707,11 +1780,14 @@ components:
           pattern: '^TMP-[0-9a-f]{8}$'
         payload:
           type: object
-          description: Badan request endpoint asal sesuai jenis.
+          description: |
+            Badan request endpoint asal sesuai jenis (tanpa `uuid`; diisi dari `uuid` rekaman, dan bila ada
+            harus sama). Jenis `surat_jalan` memuat `trip_id` (kode trip atau UUID klien trip).
           additionalProperties: true
         dibuat_pada:
           type: string
           format: date-time
+          description: Waktu dibuat di perangkat. `surat_jalan` lebih tua dari 72 jam ditolak (kunci offline 3x24 jam).
     SinkronBatchRequest:
       type: object
       required: [rekaman]
