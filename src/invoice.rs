@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     audit,
-    auth::principal::AdminKeuanganAkses,
+    auth::principal::{AdminKeuanganAkses, AdminKeuanganTulis},
     error::{AppError, AppResult},
     fee::bagi_bulat,
     state::AppState,
@@ -235,7 +235,7 @@ pub async fn daftar(
 /// `POST /admin/invoice/{id}/lunas`: tandai lunas, bekukan denda, beraudit (`audit_id`).
 pub async fn lunas(
     State(state): State<AppState>,
-    AdminKeuanganAkses(akun): AdminKeuanganAkses,
+    AdminKeuanganTulis(akun): AdminKeuanganTulis,
     Path(id): Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
     let hari_ini = waktu::hari_ini_wib();

@@ -375,3 +375,21 @@ impl FromRequestParts<AppState> for AdminKeuanganAkses {
         Ok(AdminKeuanganAkses(akun))
     }
 }
+
+/// Penulisan keuangan (tandai invoice lunas): hanya `admin_keuangan` atau kunci layanan (web).
+/// Hak tulis admin dijaga minimum (ADR-0006); admin gudang hanya menulis papan harga.
+#[derive(Debug, Clone)]
+pub struct AdminKeuanganTulis(pub AkunAdmin);
+
+impl FromRequestParts<AppState> for AdminKeuanganTulis {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let akun = AkunAdmin::from_request_parts(parts, state).await?;
+        akun.wajib_peran(state, &[Peran::AdminKeuangan]).await?;
+        Ok(AdminKeuanganTulis(akun))
+    }
+}
