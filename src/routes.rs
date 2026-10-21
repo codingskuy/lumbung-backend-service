@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::{
     extract::State,
     http::StatusCode,
-    response::Json,
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tower_http::{cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
 use crate::{
-    auth::handlers as auth, invoice, keranjang, lot, papan_harga, pembayaran, sinkron, sistem,
-    sopir, state::AppState, trip,
+    auth::handlers as auth, error::AppError, invoice, keranjang, lot, papan_harga, pembayaran,
+    sinkron, sistem, sopir, state::AppState, trip,
 };
 
 /// Endpoint kesehatan infra: menjawab `ok` hanya bila query ringan ke DB berhasil.
@@ -24,6 +24,20 @@ async fn healthz(State(state): State<AppState>) -> Result<Json<Value>, StatusCod
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(Json(json!({ "status": "ok", "db": "lumbung" })))
+}
+
+/// Fallback JSON baku untuk rute tak dikenal (404, `Galat`).
+async fn rute_tak_dikenal() -> AppError {
+    AppError::NotFound
+}
+
+/// Fallback JSON baku untuk metode tak didukung pada rute yang ada (405, `Galat`).
+async fn metode_tak_didukung() -> Response {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(json!({ "error": "metode tidak didukung" })),
+    )
+        .into_response()
 }
 
 /// Rute API v1 (relatif terhadap `/v1`).
@@ -56,7 +70,13 @@ fn api_v1() -> Router<AppState> {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
-        .nest("/v1", api_v1())
+        .nest(
+            "/v1",
+            api_v1()
+                .fallback(rute_tak_dikenal)
+                .method_not_allowed_fallback(metode_tak_didukung),
+        )
+        .fallback(rute_tak_dikenal)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .layer(TimeoutLayer::with_status_code(

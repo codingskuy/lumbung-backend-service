@@ -265,6 +265,11 @@ impl FromRequestParts<AppState> for AkunAdmin {
     ) -> Result<Self, Self::Rejection> {
         if header(parts, "x-service-key").is_some() {
             Layanan::from_request_parts(parts, state).await?;
+            // Kredensial yang dikirim harus sah semuanya: bearer rusak di samping kunci layanan
+            // sah tetap 401 (tidak diam-diam diabaikan).
+            if bearer(parts).is_some() || header(parts, "authorization").is_some() {
+                Pengguna::from_request_parts(parts, state).await?;
+            }
             return Ok(AkunAdmin::Layanan {
                 perangkat_id: perangkat(parts),
             });

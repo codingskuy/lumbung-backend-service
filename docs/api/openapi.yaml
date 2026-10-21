@@ -99,6 +99,8 @@ paths:
               akun: sopir-02
               pin: '123456'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           description: Token diterbitkan.
           content:
@@ -132,6 +134,8 @@ paths:
             schema:
               $ref: '#/components/schemas/RefreshRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           description: Token baru.
           content:
@@ -181,6 +185,8 @@ paths:
               operator: OPR-SORTIR-1
               pin: '123456'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           description: Token shift diterbitkan.
           content:
@@ -273,6 +279,8 @@ paths:
               lat: -7.79
               lng: 110.36
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -310,6 +318,8 @@ paths:
             schema:
               $ref: '#/components/schemas/TitikTibaRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -349,6 +359,8 @@ paths:
             schema:
               $ref: '#/components/schemas/BuktiTerimaRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -394,8 +406,11 @@ paths:
                 berkas:
                   type: string
                   contentMediaType: image/jpeg
-                  description: Berkas JPEG maksimal 500 KB.
+                  minLength: 1
+                  description: Berkas JPEG utuh, 1 sampai 512000 byte (500 KB).
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -438,6 +453,8 @@ paths:
             schema:
               $ref: '#/components/schemas/InsidenRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -491,6 +508,8 @@ paths:
             schema:
               $ref: '#/components/schemas/RencanaSetoranRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -594,6 +613,8 @@ paths:
               berat_kotor_g: 120000
               petugas: OPR-SORTIR-1
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -646,6 +667,8 @@ paths:
               grade_c_g: 6000
               petugas: OPR-SORTIR-1
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -693,6 +716,8 @@ paths:
             schema:
               $ref: '#/components/schemas/KeranjangBatchRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -733,6 +758,8 @@ paths:
             schema:
               $ref: '#/components/schemas/BuatTripRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -789,6 +816,8 @@ paths:
                   type: string
                   format: uuid
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           $ref: '#/components/responses/AksiDuplikat'
         '201':
@@ -870,6 +899,8 @@ paths:
             schema:
               $ref: '#/components/schemas/SinkronBatchRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           description: Hasil sinkron per rekaman.
           content:
@@ -1108,6 +1139,8 @@ paths:
             schema:
               $ref: '#/components/schemas/TerbitPapanRequest'
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           description: UUID klien sudah pernah diproses; `audit_id` pertama dikembalikan dengan `duplikat` true.
           content:
@@ -1199,6 +1232,8 @@ paths:
                   type: string
                   enum: [AKTIF, NONAKTIF]
       responses:
+        '400':
+          $ref: '#/components/responses/InputTakTerbaca'
         '200':
           description: Status diubah.
           content:
@@ -1266,6 +1301,14 @@ components:
         pattern: '^(L-\d{4,}|TMP-[0-9a-f]{8})$'
         examples: [L-8812]
   responses:
+    InputTakTerbaca:
+      description: Badan permintaan tak terbaca (JSON rusak atau `Content-Type` bukan `application/json`/`multipart/form-data`) (400). Bentuk atau nilai yang salah tetap 422.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Galat'
+          example:
+            error: 'validasi gagal: Expected request with `Content-Type: application/json`'
     AksiDibuat:
       description: Rekaman dibuat.
       content:
@@ -1359,6 +1402,11 @@ components:
       format: int64
       minimum: 0
       description: Uang dalam rupiah integer.
+    GramPositif:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Berat gram integer lebih dari 0.
     Gram:
       type: integer
       format: int64
@@ -1401,20 +1449,24 @@ components:
           format: date-time
     MasukRequest:
       type: object
+      additionalProperties: false
       required: [akun, pin]
       properties:
         akun:
           type: string
+          minLength: 1
           description: Akun peran, contoh `sopir-02` atau `PTN-007`.
         pin:
           type: string
           pattern: '^\d{6}$'
     RefreshRequest:
       type: object
+      additionalProperties: false
       required: [refresh_token]
       properties:
         refresh_token:
           type: string
+          minLength: 1
     TokenResponse:
       type: object
       required: [token, refresh_token, berlaku_sampai, peran]
@@ -1439,10 +1491,12 @@ components:
             examples: [TRIP-UT-041]
     GudangMasukRequest:
       type: object
+      additionalProperties: false
       required: [operator, pin]
       properties:
         operator:
           type: string
+          minLength: 1
           examples: [OPR-SORTIR-1]
         pin:
           type: string
@@ -1459,33 +1513,43 @@ components:
           format: date-time
     TitikTibaRequest:
       type: object
+      additionalProperties: false
       required: [uuid, trip_id, titik_id, waktu]
       properties:
         uuid:
           $ref: '#/components/schemas/UuidKlien'
         trip_id:
           type: string
+          minLength: 1
           examples: [TRIP-UT-041]
         titik_id:
           type: string
+          minLength: 1
           examples: [PWN-1]
         waktu:
           type: string
           format: date-time
         lat:
           type: number
+          minimum: -90
+          maximum: 90
         lng:
           type: number
+          minimum: -180
+          maximum: 180
     BuktiTerimaRequest:
       type: object
+      additionalProperties: false
       required: [uuid, trip_id, titik_id, waktu, foto_ids]
       properties:
         uuid:
           $ref: '#/components/schemas/UuidKlien'
         trip_id:
           type: string
+          minLength: 1
         titik_id:
           type: string
+          minLength: 1
         waktu:
           type: string
           format: date-time
@@ -1503,12 +1567,15 @@ components:
           type: string
     InsidenRequest:
       type: object
+      additionalProperties: false
       required: [uuid, jenis]
       properties:
         uuid:
           $ref: '#/components/schemas/UuidKlien'
         jenis:
           type: string
+          minLength: 1
+          maxLength: 64
           description: Jenis insiden, contoh keterlambatan.
         catatan:
           type: string
@@ -1590,6 +1657,7 @@ components:
       properties:
         id:
           type: string
+          minLength: 1
           maxLength: 32
           examples: [PWN-1]
         zona:
@@ -1600,6 +1668,7 @@ components:
           description: Pesanan yang dilayani titik ini (dasar fee per pesanan); tidak boleh dobel pada satu trip.
         pembeli:
           type: string
+          minLength: 1
           maxLength: 64
           description: Pembeli yang ditagih fee (invoice mingguan per pembeli). Fee tanpa pembeli tidak masuk invoice. Tambahan opsional v1.0.0 (ADR-0005).
         keranjang:
@@ -1607,7 +1676,7 @@ components:
           description: Subset keranjang trip yang diantar ke titik ini.
           items:
             type: string
-            pattern: '^KRJ-\d{3}$'
+            pattern: '^KRJ-(00[1-9]|0[1-9][0-9]|1[01][0-9]|120)$'
     BuatTripRequest:
       type: object
       required: [uuid, rute, kendaraan, keranjang]
@@ -1620,9 +1689,11 @@ components:
           enum: [UTARA, SELATAN, KOTA]
         kendaraan:
           type: string
+          minLength: 1
           maxLength: 64
         kas_jalan:
-          $ref: '#/components/schemas/Rupiah'
+          type: integer
+          enum: [300000]
           description: Bila dikirim harus 300000 (nilai tetap FSD/20); bila kosong server memakai 300000.
         keranjang:
           type: array
@@ -1630,13 +1701,14 @@ components:
           minItems: 1
           items:
             type: string
-            pattern: '^KRJ-\d{3}$'
+            pattern: '^KRJ-(00[1-9]|0[1-9][0-9]|1[01][0-9]|120)$'
         tanggal:
           type: string
           format: date
           description: Tanggal tugas; bawaan hari ini (WIB). Tambahan opsional v1.0.0 (ADR-0004).
         sopir:
           type: string
+          minLength: 1
           description: Akun sopir yang bertugas; wajib akun sopir aktif. Tambahan opsional v1.0.0 (ADR-0004).
         titik:
           type: array
@@ -1691,7 +1763,7 @@ components:
           type: string
           format: date
         berat_kotor_g:
-          $ref: '#/components/schemas/Gram'
+          $ref: '#/components/schemas/GramPositif'
         petugas:
           type: string
     Lot:
@@ -1753,13 +1825,14 @@ components:
       properties:
         kode:
           type: string
-          pattern: '^KRJ-\d{3}$'
+          pattern: '^KRJ-(00[1-9]|0[1-9][0-9]|1[01][0-9]|120)$'
         lot_id:
           type: string
+          minLength: 1
         grade:
           $ref: '#/components/schemas/Grade'
         berat_g:
-          $ref: '#/components/schemas/Gram'
+          $ref: '#/components/schemas/GramPositif'
     KeranjangBatchRequest:
       type: object
       additionalProperties: false
@@ -1867,6 +1940,7 @@ components:
                 $ref: '#/components/schemas/Gram'
     RencanaSetoranRequest:
       type: object
+      additionalProperties: false
       required: [uuid, komoditas, estimasi_g, tanggal]
       properties:
         uuid:
@@ -1929,6 +2003,7 @@ components:
           examples: ['2026-10-06 s.d. 2026-10-12']
     TerbitPapanRequest:
       type: object
+      additionalProperties: false
       required: [uuid, berlaku_mulai, referensi]
       additionalProperties: false
       properties:
