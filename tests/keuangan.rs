@@ -358,7 +358,8 @@ async fn lunas_beraudit_membekukan_denda_dan_ketat_peran(pool: PgPool) {
         .unwrap();
     let uri = format!("/v1/admin/invoice/{id}/lunas");
 
-    // Peran salah dan tanpa kredensial ditolak sebelum menyentuh data.
+    // Peran salah dan tanpa kredensial ditolak sebelum menyentuh data. Hak tulis admin minimum:
+    // admin gudang menulis papan harga, bukan melunasi invoice.
     let sopir = u.admin("sopir-02", Peran::Sopir).await;
     let koord = u.admin("koord-01", Peran::KoordinatorTani).await;
     let petani = u.admin("PTN-007", Peran::Petani).await;
@@ -377,6 +378,11 @@ async fn lunas_beraudit_membekukan_denda_dan_ketat_peran(pool: PgPool) {
         (
             "petani",
             vec![("authorization", petani.as_str())],
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "admin gudang (hanya baca invoice)",
+            vec![("authorization", u.sesi.auth.as_str())],
             StatusCode::FORBIDDEN,
         ),
         (
@@ -426,7 +432,7 @@ async fn lunas_beraudit_membekukan_denda_dan_ketat_peran(pool: PgPool) {
     assert_eq!(pawon["status"], "LUNAS");
     assert_eq!(pawon["denda"], 5_100);
 
-    // Sekali saja: lunas ulang 409; invoice tak ada 404; layanan dan admin gudang boleh.
+    // Sekali saja: lunas ulang 409; invoice tak ada 404; kunci layanan (web) boleh.
     let r = kirim(&u.app, "POST", &uri, &[("authorization", &keu)], None).await;
     assert_eq!(r.status, StatusCode::CONFLICT);
     let r = kirim(
@@ -533,7 +539,7 @@ async fn pembayaran_h_plus_1_dari_berat_bersih_per_grade_kali_harga_papan(pool: 
     buat_pengguna(&u.pool, "PTN-007", Peran::Petani).await;
     let token = masuk_petani(&u, "PTN-007").await;
     u.papan(0).await;
-    // L-8812: A 100.000 g x 31.500 + B 14.000 g x 26.500 = Rp3.521.000; C tidak dibayar.
+    // L-8812: A 100.000 g x 31.500 + B 14.000 g x (85% x 31.500) = Rp3.524.850; C tidak dibayar.
     let lot = u
         .lot("PTN-007", "cabai", 120_000, 100_000, 14_000, 6_000)
         .await;
@@ -542,11 +548,11 @@ async fn pembayaran_h_plus_1_dari_berat_bersih_per_grade_kali_harga_papan(pool: 
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
     assert_eq!(
         r.json["data"],
-        json!([{"lot_id": lot, "nominal": 3_521_000, "status": "MENUNGGU",
+        json!([{"lot_id": lot, "nominal": 3_524_850, "status": "MENUNGGU",
                 "jatuh_tempo": (hari_ini() + Duration::days(1)).to_string(), "denda": 0}])
     );
 
-    // Komoditas lain memakai harganya sendiri: bawang A 6.000 x 28.000 + B 3.500 x 23.500.
+    // Komoditas lain memakai harganya sendiri: bawang A 6.000 x 28.000 + B 3.500 x (85% x 28.000).
     let bawang = u.lot("PTN-007", "bawang", 10_000, 6_000, 3_500, 500).await;
     let r = bayar_saya(&u, &token).await;
     let baris = r.json["data"]
@@ -556,7 +562,7 @@ async fn pembayaran_h_plus_1_dari_berat_bersih_per_grade_kali_harga_papan(pool: 
         .find(|p| p["lot_id"] == bawang.as_str())
         .unwrap()
         .clone();
-    assert_eq!(baris["nominal"], 168_000 + 82_250);
+    assert_eq!(baris["nominal"], 168_000 + 83_300);
 }
 
 #[sqlx::test]
@@ -620,25 +626,25 @@ async fn denda_pembayaran_setengah_persen_per_hari_maks_lima_persen(pool: PgPool
     let b = baris(bayar_saya(&u, &token).await);
     assert_eq!(
         (b["status"].as_str(), b["denda"].as_i64()),
-        (Some("TERLAMBAT"), Some(17_605)),
+        (Some("TERLAMBAT"), Some(17_624)),
         "0,5 persen"
     );
     geser(3).await;
     assert_eq!(
         baris(bayar_saya(&u, &token).await)["denda"],
-        52_815,
+        52_873,
         "1,5 persen"
     );
     geser(10).await;
     assert_eq!(
         baris(bayar_saya(&u, &token).await)["denda"],
-        176_050,
+        176_243,
         "5 persen"
     );
     geser(25).await;
     assert_eq!(
         baris(bayar_saya(&u, &token).await)["denda"],
-        176_050,
+        176_243,
         "dibatasi 5 persen"
     );
 }
@@ -664,7 +670,7 @@ async fn tandai_dibayar_membekukan_nominal_dan_denda(pool: PgPool) {
     let dibayar = tandai_dibayar(&u.pool, &lot, hari_ini()).await.unwrap();
     assert_eq!(
         (dibayar.status, dibayar.nominal, dibayar.denda),
-        ("DIBAYAR", 3_521_000, 52_815)
+        ("DIBAYAR", 3_524_850, 52_873)
     );
     // Beku: berapa pun waktu berlalu, nominal dan denda tidak berubah; status DIBAYAR.
     sqlx::query(
@@ -675,8 +681,8 @@ async fn tandai_dibayar_membekukan_nominal_dan_denda(pool: PgPool) {
     .unwrap();
     let r = bayar_saya(&u, &token).await;
     assert_eq!(r.json["data"][0]["status"], "DIBAYAR");
-    assert_eq!(r.json["data"][0]["nominal"], 3_521_000);
-    assert_eq!(r.json["data"][0]["denda"], 52_815);
+    assert_eq!(r.json["data"][0]["nominal"], 3_524_850);
+    assert_eq!(r.json["data"][0]["denda"], 52_873);
     // Dua kali tidak boleh; lot tak ada 404.
     assert!(tandai_dibayar(&u.pool, &lot, hari_ini()).await.is_err());
     assert!(tandai_dibayar(&u.pool, "L-9999", hari_ini()).await.is_err());
@@ -702,8 +708,8 @@ async fn pembayaran_saya_difilter_server_per_petani_dan_hanya_peran_petani(pool:
     assert_eq!(r7.json["data"][0]["lot_id"], lot7.as_str());
     assert_eq!(r8.json["data"].as_array().unwrap().len(), 1);
     assert_eq!(r8.json["data"][0]["lot_id"], lot8.as_str());
-    // Kangkung: A 9.000 x 6.000 + B 1.000 x 5.000 = 54.000 + 5.000.
-    assert_eq!(r8.json["data"][0]["nominal"], 59_000);
+    // Kangkung: A 9.000 x 6.000 + B 1.000 x (85% x 6.000) = 54.000 + 5.100.
+    assert_eq!(r8.json["data"][0]["nominal"], 59_100);
 
     // Petani tidak bisa meminta data orang lain lewat parameter apa pun.
     let r = kirim(
