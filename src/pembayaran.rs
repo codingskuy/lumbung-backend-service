@@ -1,8 +1,8 @@
 //! Pembayaran petani H+1 (LMB-BE-006, BR-104/FR-204).
 //!
 //! Dibuat saat sortir dicatat (berat bersih per grade diketahui): jatuh tempo H+1 (tanggal WIB).
-//! Nominal = berat bersih Grade A x harga papan A + berat bersih Grade B x harga papan B, dengan
-//! papan minggu berjalan pada tanggal sortir (harga B papan sudah memuat faktor 85 persen, ADR-0005).
+//! Nominal = berat bersih Grade A x 100% harga papan + berat bersih Grade B x 85% harga papan
+//! (harga papan = harga Grade A), papan minggu berjalan pada tanggal sortir (ADR-0006).
 //! Grade C tidak dibayar (dialihkan). Denda Lumbung 0,5 persen per hari keterlambatan, maksimal 5 persen.
 
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ use sqlx::{PgConnection, PgPool};
 
 use crate::{
     auth::principal::PeranPetani,
-    domain::Komoditas,
+    domain::{tarif, Komoditas},
     error::{AppError, AppResult},
     fee::bagi_bulat,
     lot::LotRow,
@@ -29,9 +29,11 @@ pub const DENDA_PER_MIL_PER_HARI: i64 = 5;
 /// Denda maksimal, dalam per mil (5 persen).
 pub const DENDA_MAKS_PER_MIL: i64 = 50;
 
-/// Nominal pembayaran dari berat bersih (gram) dan harga papan per kg (rupiah).
+/// Nominal pembayaran dari berat bersih (gram) dan harga papan per kg (rupiah): Grade A dibayar
+/// 100 persen harga papan, Grade B 85 persen harga papan (BRD, ADR-0006). Pembulatan setengah naik
+/// per grade ke rupiah terdekat.
 pub fn hitung_nominal(a_g: i64, b_g: i64, harga: HargaGrade) -> i64 {
-    bagi_bulat(a_g * harga.a, 1000) + bagi_bulat(b_g * harga.b, 1000)
+    bagi_bulat(a_g * harga.a, 1000) + bagi_bulat(b_g * harga.a * tarif::PERSEN_GRADE_B, 100 * 1000)
 }
 
 /// Denda Lumbung: 0,5 persen per hari lewat jatuh tempo, maksimal 5 persen dari nominal.
@@ -224,21 +226,24 @@ mod tests {
 
     #[test]
     fn nominal_berat_bersih_per_grade_kali_harga_papan() {
-        // Contoh L-8812: A 100.000 g x 31.500 + B 14.000 g x 26.500 = 3.150.000 + 371.000.
+        // Contoh L-8812: A 100.000 g x 31.500 + B 14.000 g x (85% x 31.500) = 3.150.000 + 374.850.
         let harga = HargaGrade {
             a: 31_500,
             b: 26_500,
         };
-        assert_eq!(hitung_nominal(100_000, 14_000, harga), 3_521_000);
+        assert_eq!(hitung_nominal(100_000, 14_000, harga), 3_524_850);
         assert_eq!(hitung_nominal(0, 0, harga), 0);
         // Pecahan kg dibulatkan setengah naik: 333 g x 31.500 / 1.000 = 10.489,5 -> 10.490.
         assert_eq!(hitung_nominal(333, 0, harga), 10_490);
+        // Grade B 85 persen harga papan (bukan harga papan B): 333 g x 31.500 x 0,85 = 8.916,075 -> 8.916.
+        assert_eq!(hitung_nominal(0, 333, harga), 8_916);
+        assert_eq!(hitung_nominal(0, 1_000, harga), 26_775);
     }
 
     #[test]
     fn denda_setengah_persen_per_hari_maks_lima_persen() {
         let jt = d(2026, 10, 12);
-        let n = 3_521_000;
+        let n = 3_524_850;
         assert_eq!(
             denda_pembayaran(n, jt, d(2026, 10, 12)),
             0,
@@ -247,22 +252,22 @@ mod tests {
         assert_eq!(denda_pembayaran(n, jt, d(2026, 10, 11)), 0);
         assert_eq!(
             denda_pembayaran(n, jt, d(2026, 10, 13)),
-            17_605,
+            17_624,
             "1 hari = 0,5 persen"
         );
         assert_eq!(
             denda_pembayaran(n, jt, d(2026, 10, 15)),
-            52_815,
+            52_873,
             "3 hari = 1,5 persen"
         );
         assert_eq!(
             denda_pembayaran(n, jt, d(2026, 10, 22)),
-            176_050,
+            176_243,
             "10 hari = 5 persen"
         );
         assert_eq!(
             denda_pembayaran(n, jt, d(2026, 12, 31)),
-            176_050,
+            176_243,
             "dibatasi 5 persen"
         );
     }
