@@ -134,15 +134,35 @@ pub async fn insiden(
     Ok(Json(json!({ "data": data })))
 }
 
-/// `GET /publik/profil`: profil Lumbung tanpa login, cache 15 menit. Isi minimal (nama); deskripsi
-/// dan kontak kemitraan menunggu keputusan konten (kontrak menjadikannya opsional).
-pub async fn profil() -> Response {
-    let mut res = Json(json!({"nama": "Lumbung"})).into_response();
+#[derive(Debug, sqlx::FromRow)]
+struct ProfilRow {
+    nama: String,
+    deskripsi: Option<String>,
+    kontak_kemitraan: Option<String>,
+}
+
+/// `GET /publik/profil`: profil Lumbung dari tabel `profil_publik`, tanpa login, cache 15 menit.
+/// Deskripsi dan kontak kemitraan opsional (dihilangkan bila kosong).
+pub async fn profil(State(state): State<AppState>) -> AppResult<Response> {
+    let p = sqlx::query_as::<_, ProfilRow>(
+        "SELECT nama, deskripsi, kontak_kemitraan FROM profil_publik WHERE id = 1",
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    let mut badan = json!({"nama": p.nama});
+    if let Some(d) = p.deskripsi {
+        badan["deskripsi"] = json!(d);
+    }
+    if let Some(k) = p.kontak_kemitraan {
+        badan["kontak_kemitraan"] = json!(k);
+    }
+    let mut res = Json(badan).into_response();
     res.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static(CACHE_PUBLIK),
     );
-    res
+    Ok(res)
 }
 
 fn belum_diimplementasi() -> Response {

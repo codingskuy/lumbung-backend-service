@@ -89,7 +89,16 @@ async fn endpoint_baca_admin_profil_501_dan_galat_json_baku(pool: PgPool) {
 
     let r = kirim(&app, "GET", "/v1/publik/profil", &[], None).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert_eq!(r.json["nama"], "Lumbung");
+    assert_eq!(r.json, json!({"nama": "Lumbung"}));
+    sqlx::query("UPDATE profil_publik SET deskripsi = 'Agregasi panen', kontak_kemitraan = 'mitra@lumbung.id'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = kirim(&app, "GET", "/v1/publik/profil", &[], None).await;
+    assert_eq!(
+        r.json,
+        json!({"nama": "Lumbung", "deskripsi": "Agregasi panen", "kontak_kemitraan": "mitra@lumbung.id"})
+    );
     assert_eq!(
         r.headers.get("cache-control").unwrap(),
         "public, max-age=900"
