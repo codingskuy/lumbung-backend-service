@@ -10,13 +10,13 @@ use axum::{
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 use uuid::Uuid;
 
 use crate::{
     audit,
     auth::{peran::Peran, principal::Gudang},
-    domain::{AksiHasil, Komoditas},
+    domain::{AksiHasil, Hasil, Komoditas, Konteks},
     error::{AppError, AppResult},
     extract::ApiJson,
     state::AppState,
@@ -187,16 +187,7 @@ fn petugas_atau_akun(petugas: &Option<String>, akun: &str) -> String {
         .to_string()
 }
 
-/// `POST /lot`: buat lot dan catat timbang kotor; kode resmi `L-NNNN` dari server.
-pub async fn buat(
-    State(state): State<AppState>,
-    gudang: Gudang,
-    ApiJson(req): ApiJson<BuatLotRequest>,
-) -> AppResult<Response> {
-    gudang
-        .pengguna
-        .wajib_peran(&state, &[Peran::AdminGudang])
-        .await?;
+fn validasi_lot(req: &BuatLotRequest) -> AppResult<()> {
     if !kode_petani_valid(&req.kode_petani) {
         return Err(AppError::Unprocessable("kode_petani harus PTN-NNN".into()));
     }
@@ -205,19 +196,29 @@ pub async fn buat(
             "berat_kotor_g harus lebih dari 0 gram".into(),
         ));
     }
+    Ok(())
+}
 
-    let mut tx = state.pool.begin().await?;
+/// Buat lot di dalam transaksi pemanggil. `nomor_sementara` (`TMP-*`) dipetakan ke kode resmi
+/// pada sinkron offline. UUID klien yang sama mengembalikan [`Hasil::Duplikat`].
+pub async fn buat_lot_tx(
+    conn: &mut PgConnection,
+    ctx: &Konteks,
+    req: &BuatLotRequest,
+    nomor_sementara: Option<&str>,
+) -> AppResult<Hasil<LotRow>> {
+    validasi_lot(req)?;
     let ada: Option<String> = sqlx::query_scalar("SELECT kode FROM lot WHERE uuid_klien = $1")
         .bind(req.uuid)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *conn)
         .await?;
     if let Some(kode) = ada {
-        return Ok(duplikat(kode));
+        return Ok(Hasil::Duplikat(kode));
     }
     let status_petani: Option<String> =
         sqlx::query_scalar("SELECT status FROM petani WHERE kode = $1")
             .bind(&req.kode_petani)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *conn)
             .await?;
     match status_petani.as_deref() {
         Some("AKTIF") => {}
@@ -235,35 +236,44 @@ pub async fn buat(
         }
     }
 
-    let petugas = petugas_atau_akun(&req.petugas, &gudang.pengguna.akun);
+    let petugas = petugas_atau_akun(&req.petugas, &ctx.akun);
     let nomor: i64 = sqlx::query_scalar("SELECT nextval('lot_kode_seq')")
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *conn)
         .await?;
     let kode = format!("L-{nomor:04}");
     let sql = format!(
-        "INSERT INTO lot (uuid_klien, kode, kode_petani, komoditas, tanggal, berat_kotor_g, dibuat_oleh)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {KOLOM_LOT}"
+        "INSERT INTO lot (uuid_klien, kode, nomor_sementara, kode_petani, komoditas, tanggal, berat_kotor_g, dibuat_oleh)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {KOLOM_LOT}"
     );
+    // Savepoint: pelanggaran unik tidak boleh membatalkan transaksi pemanggil.
+    let mut sp = conn.begin().await?;
     let lot = match sqlx::query_as::<_, LotRow>(&sql)
         .bind(req.uuid)
         .bind(&kode)
+        .bind(nomor_sementara)
         .bind(&req.kode_petani)
         .bind(req.komoditas.sebagai_str())
         .bind(req.tanggal)
         .bind(req.berat_kotor_g)
         .bind(&petugas)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *sp)
         .await
     {
         Ok(l) => l,
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
-            // Balapan dua permintaan dengan UUID sama: yang kalah mengembalikan hasil pertama.
-            drop(tx);
-            let kode: String = sqlx::query_scalar("SELECT kode FROM lot WHERE uuid_klien = $1")
-                .bind(req.uuid)
-                .fetch_one(&state.pool)
-                .await?;
-            return Ok(duplikat(kode));
+            drop(sp);
+            // Balapan UUID yang sama, atau nomor sementara sudah dipetakan ke lot lain.
+            let kode: Option<String> =
+                sqlx::query_scalar("SELECT kode FROM lot WHERE uuid_klien = $1")
+                    .bind(req.uuid)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+            return match kode {
+                Some(k) => Ok(Hasil::Duplikat(k)),
+                None => Err(AppError::Conflict(
+                    "nomor sementara sudah dipakai lot lain".into(),
+                )),
+            };
         }
         Err(e) => return Err(e.into()),
     };
@@ -273,23 +283,40 @@ pub async fn buat(
     .bind(lot.id)
     .bind(req.berat_kotor_g)
     .bind(&petugas)
-    .execute(&mut *tx)
+    .execute(&mut *sp)
     .await?;
-    tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(LotJson::from(lot))).into_response())
+    sp.commit().await?;
+    Ok(Hasil::Baru(lot))
 }
 
-/// `POST /lot/{id}/sortir`: catat hasil sortir A/B/C; total harus dalam 2 persen berat kotor.
-pub async fn sortir(
+/// `POST /lot`: buat lot dan catat timbang kotor; kode resmi `L-NNNN` dari server.
+pub async fn buat(
     State(state): State<AppState>,
     gudang: Gudang,
-    Path(id): Path<String>,
-    ApiJson(req): ApiJson<SortirRequest>,
+    ApiJson(req): ApiJson<BuatLotRequest>,
 ) -> AppResult<Response> {
     gudang
         .pengguna
         .wajib_peran(&state, &[Peran::AdminGudang])
         .await?;
+    let ctx = gudang.konteks();
+    let mut tx = state.pool.begin().await?;
+    let hasil = buat_lot_tx(&mut tx, &ctx, &req, None).await?;
+    tx.commit().await?;
+    Ok(match hasil {
+        Hasil::Baru(lot) => (StatusCode::CREATED, Json(LotJson::from(lot))).into_response(),
+        Hasil::Duplikat(kode) => duplikat(kode),
+    })
+}
+
+/// Catat hasil sortir di dalam transaksi pemanggil. `id` adalah kode dari path (atau `lot_id`
+/// rekaman sinkron) dan harus sama dengan `req.lot_id`.
+pub async fn sortir_tx(
+    conn: &mut PgConnection,
+    ctx: &Konteks,
+    id: &str,
+    req: &SortirRequest,
+) -> AppResult<Hasil<LotRow>> {
     if [req.grade_a_g, req.grade_b_g, req.grade_c_g]
         .iter()
         .any(|g| *g < 0)
@@ -298,22 +325,18 @@ pub async fn sortir(
             "berat grade tidak boleh negatif".into(),
         ));
     }
-
-    let mut tx = state.pool.begin().await?;
     // Idempotensi dahulu: kirim ulang tidak boleh gagal hanya karena lot sudah berubah status.
     let ada: Option<String> = sqlx::query_scalar(
         "SELECT l.kode FROM sortir s JOIN lot l ON l.id = s.lot_id WHERE s.uuid_klien = $1",
     )
     .bind(req.uuid)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
     if let Some(kode) = ada {
-        return Ok(duplikat(kode));
+        return Ok(Hasil::Duplikat(kode));
     }
 
-    let lot = cari_lot(&mut tx, &id, true)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let lot = cari_lot(conn, id, true).await?.ok_or(AppError::NotFound)?;
     let cocok = |k: &str| k == lot.kode || Some(k) == lot.nomor_sementara.as_deref();
     if !cocok(&req.lot_id) {
         return Err(AppError::Unprocessable(
@@ -332,7 +355,7 @@ pub async fn sortir(
         ));
     }
 
-    let petugas = petugas_atau_akun(&req.petugas, &gudang.pengguna.akun);
+    let petugas = petugas_atau_akun(&req.petugas, &ctx.akun);
     sqlx::query(
         "INSERT INTO sortir (uuid_klien, lot_id, grade_a_g, grade_b_g, grade_c_g, petugas)
          VALUES ($1, $2, $3, $4, $5, $6)",
@@ -343,7 +366,7 @@ pub async fn sortir(
     .bind(req.grade_b_g)
     .bind(req.grade_c_g)
     .bind(&petugas)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     sqlx::query(
         "INSERT INTO timbangan (lot_id, jenis, berat_g, petugas) VALUES ($1, 'BERSIH', $2, $3)",
@@ -351,20 +374,20 @@ pub async fn sortir(
     .bind(lot.id)
     .bind(total)
     .bind(&petugas)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     if req.grade_c_g > 0 {
         // FR-003: Grade C tidak masuk rantai dingin; alihnya dicatat.
         sqlx::query("INSERT INTO alih_grade_c (lot_id, berat_g) VALUES ($1, $2)")
             .bind(lot.id)
             .bind(req.grade_c_g)
-            .execute(&mut *tx)
+            .execute(&mut *conn)
             .await?;
         audit::catat(
-            &mut tx,
-            &gudang.pengguna.akun,
+            conn,
+            &ctx.akun,
             "grade_c_dialihkan",
-            gudang.pengguna.perangkat_id.as_deref(),
+            ctx.perangkat.as_deref(),
             json!({"lot": lot.kode, "berat_g": req.grade_c_g}),
         )
         .await?;
@@ -379,10 +402,30 @@ pub async fn sortir(
         .bind(req.grade_a_g)
         .bind(req.grade_b_g)
         .bind(req.grade_c_g)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *conn)
         .await?;
+    Ok(Hasil::Baru(baru))
+}
+
+/// `POST /lot/{id}/sortir`: catat hasil sortir A/B/C; total harus dalam 2 persen berat kotor.
+pub async fn sortir(
+    State(state): State<AppState>,
+    gudang: Gudang,
+    Path(id): Path<String>,
+    ApiJson(req): ApiJson<SortirRequest>,
+) -> AppResult<Response> {
+    gudang
+        .pengguna
+        .wajib_peran(&state, &[Peran::AdminGudang])
+        .await?;
+    let ctx = gudang.konteks();
+    let mut tx = state.pool.begin().await?;
+    let hasil = sortir_tx(&mut tx, &ctx, &id, &req).await?;
     tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(LotJson::from(baru))).into_response())
+    Ok(match hasil {
+        Hasil::Baru(lot) => (StatusCode::CREATED, Json(LotJson::from(lot))).into_response(),
+        Hasil::Duplikat(kode) => duplikat(kode),
+    })
 }
 
 #[cfg(test)]

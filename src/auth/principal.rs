@@ -18,6 +18,7 @@ use uuid::Uuid;
 use crate::{
     audit,
     auth::{kunci, peran::Peran, sama_waktu_konstan},
+    domain::Konteks,
     error::AppError,
     state::AppState,
 };
@@ -40,6 +41,14 @@ pub struct Pengguna {
 }
 
 impl Pengguna {
+    /// Konteks audit untuk fungsi layanan.
+    pub fn konteks(&self) -> Konteks {
+        Konteks {
+            akun: self.akun.clone(),
+            perangkat: self.perangkat_id.clone(),
+        }
+    }
+
     /// Wajibkan salah satu peran; bila tidak, catat penolakan di audit lalu 403.
     pub async fn wajib_peran(&self, state: &AppState, boleh: &[Peran]) -> Result<(), AppError> {
         if boleh.contains(&self.peran) {
@@ -162,6 +171,13 @@ pub struct Gudang {
     pub pengguna: Pengguna,
     /// Kunci perangkat PC gudang.
     pub perangkat: kunci::KunciPerangkat,
+}
+
+impl Gudang {
+    /// Konteks audit untuk fungsi layanan.
+    pub fn konteks(&self) -> Konteks {
+        self.pengguna.konteks()
+    }
 }
 
 impl FromRequestParts<AppState> for Gudang {

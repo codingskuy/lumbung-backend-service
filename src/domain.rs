@@ -65,6 +65,24 @@ pub struct AksiHasil {
     pub duplikat: bool,
 }
 
+/// Siapa yang bertindak dan dari perangkat mana (untuk audit dan kolom `dibuat_oleh`).
+#[derive(Debug, Clone)]
+pub struct Konteks {
+    /// Akun pelaku.
+    pub akun: String,
+    /// Nilai `X-Perangkat-Id` bila ada.
+    pub perangkat: Option<String>,
+}
+
+/// Hasil operasi idempoten: rekaman baru, atau UUID klien sudah pernah diproses (id hasil pertama).
+#[derive(Debug)]
+pub enum Hasil<T> {
+    /// Rekaman baru dibuat.
+    Baru(T),
+    /// UUID klien sama sudah diproses; berisi ID rekaman pertama.
+    Duplikat(String),
+}
+
 /// Tarif dan persentase terkunci v1.0.0 (BRD/30-keuangan-fee). Angka bisnis hanya dari dokumen.
 pub mod tarif {
     /// Fee logistik zona DEKAT (<15 km), rupiah per kg (BR-301).
@@ -75,6 +93,8 @@ pub mod tarif {
     pub const BUFFER_PERSEN: i64 = 10;
     /// Pembulatan ke bawah papan harga: kelipatan Rp500 (BR-305).
     pub const KELIPATAN_PAPAN: i64 = 500;
+    /// Kas jalan per trip, rupiah (FSD/20 Trip).
+    pub const KAS_JALAN_PER_TRIP: i64 = 300_000;
     /// Grade B dibayar 85 persen harga Grade A (tiket LMB-BE-006: Grade A 100%, B 85%).
     pub const PERSEN_GRADE_B: i64 = 85;
 }

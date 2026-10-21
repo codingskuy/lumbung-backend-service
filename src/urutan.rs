@@ -24,6 +24,18 @@ pub async fn berikutnya(
     .await
 }
 
+/// Penghitung permanen (tidak direset harian), contoh nomor trip per rute. Mulai dari 1.
+pub async fn berikutnya_permanen(conn: &mut PgConnection, jenis: &str) -> Result<i32, sqlx::Error> {
+    sqlx::query_scalar::<_, i32>(
+        "INSERT INTO penghitung (jenis, nilai) VALUES ($1, 1)
+         ON CONFLICT (jenis) DO UPDATE SET nilai = penghitung.nilai + 1
+         RETURNING nilai",
+    )
+    .bind(jenis)
+    .fetch_one(conn)
+    .await
+}
+
 /// Format `<AWALAN>-YYYYMMDD-NNN`.
 pub fn format_nomor(awalan: &str, tanggal: NaiveDate, urut: i32) -> String {
     format!("{awalan}-{}-{urut:03}", tanggal.format("%Y%m%d"))

@@ -10,12 +10,13 @@ use std::collections::{BTreeMap, HashSet};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, response::Response, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::{Connection, PgConnection};
 use uuid::Uuid;
 
 use crate::{
     audit,
     auth::{peran::Peran, principal::Gudang},
-    domain::{AksiHasil, Grade},
+    domain::{AksiHasil, Grade, Hasil, Konteks},
     error::{AppError, AppResult},
     extract::ApiJson,
     lot::cari_lot,
@@ -108,26 +109,20 @@ fn validasi(req: &KeranjangBatchRequest) -> AppResult<()> {
     Ok(())
 }
 
-/// `POST /keranjang/batch`: catat hingga 50 keranjang secara atomik (semua atau tidak sama sekali).
-pub async fn batch(
-    State(state): State<AppState>,
-    gudang: Gudang,
-    ApiJson(req): ApiJson<KeranjangBatchRequest>,
-) -> AppResult<Response> {
-    gudang
-        .pengguna
-        .wajib_peran(&state, &[Peran::AdminGudang])
-        .await?;
-    validasi(&req)?;
-
-    // Grade C ditolak dari rantai dingin; percobaannya dicatat sebagai alih (FR-003).
+/// Tolak Grade C dari rantai dingin dan catat percobaannya di audit (FR-003). Dipanggil di luar
+/// transaksi batch agar catatan tetap tersimpan walau batch dibatalkan.
+pub async fn periksa_grade_c(
+    pool: &sqlx::PgPool,
+    ctx: &Konteks,
+    req: &KeranjangBatchRequest,
+) -> AppResult<()> {
     if let Some(c) = req.keranjang.iter().find(|k| k.grade == Grade::C) {
-        let mut conn = state.pool.acquire().await?;
+        let mut conn = pool.acquire().await?;
         audit::catat(
             &mut conn,
-            &gudang.pengguna.akun,
+            &ctx.akun,
             "grade_c_ditolak_rantai_dingin",
-            gudang.pengguna.perangkat_id.as_deref(),
+            ctx.perangkat.as_deref(),
             json!({"keranjang": c.kode, "lot": c.lot_id, "berat_g": c.berat_g}),
         )
         .await?;
@@ -135,22 +130,29 @@ pub async fn batch(
             "Grade C ditolak dari rantai dingin; alihnya dicatat".into(),
         ));
     }
+    Ok(())
+}
 
-    let mut tx = state.pool.begin().await?;
+/// Catat batch keranjang di dalam transaksi pemanggil (atomik: gagal sebagian = tidak ada yang
+/// tersimpan bila pemanggil membatalkan transaksinya).
+pub async fn batch_tx(
+    conn: &mut PgConnection,
+    ctx: &Konteks,
+    req: &KeranjangBatchRequest,
+) -> AppResult<Hasil<()>> {
+    validasi(req)?;
+    if req.keranjang.iter().any(|k| k.grade == Grade::C) {
+        return Err(AppError::Unprocessable(
+            "Grade C ditolak dari rantai dingin; alihnya dicatat".into(),
+        ));
+    }
     let ada: bool =
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM keranjang_batch WHERE uuid_klien = $1)")
             .bind(req.uuid)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut *conn)
             .await?;
     if ada {
-        return Ok((
-            StatusCode::OK,
-            Json(AksiHasil {
-                id: req.uuid.to_string(),
-                duplikat: true,
-            }),
-        )
-            .into_response());
+        return Ok(Hasil::Duplikat(req.uuid.to_string()));
     }
 
     // Kunci lot berurutan (BTreeMap) agar dua batch bersamaan tidak saling kunci-mati.
@@ -160,7 +162,7 @@ pub async fn batch(
     }
     let mut id_lot: BTreeMap<&str, Uuid> = BTreeMap::new();
     for (kode, items) in &per_lot {
-        let lot = cari_lot(&mut tx, kode, true)
+        let lot = cari_lot(conn, kode, true)
             .await?
             .ok_or(AppError::NotFound)?;
         if !matches!(lot.status.as_str(), "DISORTIR" | "DIMUAT") {
@@ -178,7 +180,7 @@ pub async fn batch(
             if diminta == 0 {
                 continue;
             }
-            let sisa = sisa_grade(&mut tx, lot.id, grade, &lot).await?;
+            let sisa = sisa_grade(conn, lot.id, grade, &lot).await?;
             if diminta > sisa {
                 return Err(AppError::Unprocessable(format!(
                     "stok lot {} grade {} tidak cukup: diminta {diminta} g, sisa {sisa} g",
@@ -195,11 +197,13 @@ pub async fn batch(
     )
     .bind(req.uuid)
     .bind(req.keranjang.len() as i32)
-    .bind(&gudang.pengguna.akun)
-    .execute(&mut *tx)
+    .bind(&ctx.akun)
+    .execute(&mut *conn)
     .await?;
     for item in &req.keranjang {
         let lot_id = id_lot[item.lot_id.as_str()];
+        // Savepoint: pelanggaran unik (keranjang masih terisi) tidak boleh merusak transaksi pemanggil.
+        let mut sp = conn.begin().await?;
         let hasil = sqlx::query(
             "INSERT INTO keranjang_isi (batch_uuid, kode, lot_id, grade, berat_g)
              VALUES ($1, $2, $3, $4, $5)",
@@ -209,10 +213,10 @@ pub async fn batch(
         .bind(lot_id)
         .bind(item.grade.sebagai_str())
         .bind(item.berat_g)
-        .execute(&mut *tx)
+        .execute(&mut *sp)
         .await;
         match hasil {
-            Ok(_) => {}
+            Ok(_) => sp.commit().await?,
             Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
                 return Err(AppError::Conflict(format!(
                     "keranjang {} masih terisi dan belum dikosongkan",
@@ -222,19 +226,42 @@ pub async fn batch(
             Err(e) => return Err(e.into()),
         }
     }
+    Ok(Hasil::Baru(()))
+}
+
+/// `POST /keranjang/batch`: catat hingga 50 keranjang secara atomik (semua atau tidak sama sekali).
+pub async fn batch(
+    State(state): State<AppState>,
+    gudang: Gudang,
+    ApiJson(req): ApiJson<KeranjangBatchRequest>,
+) -> AppResult<Response> {
+    gudang
+        .pengguna
+        .wajib_peran(&state, &[Peran::AdminGudang])
+        .await?;
+    validasi(&req)?;
+    let ctx = gudang.konteks();
+    periksa_grade_c(&state.pool, &ctx, &req).await?;
+
+    let mut tx = state.pool.begin().await?;
+    let hasil = batch_tx(&mut tx, &ctx, &req).await?;
     tx.commit().await?;
+    let (status, duplikat) = match hasil {
+        Hasil::Baru(()) => (StatusCode::CREATED, false),
+        Hasil::Duplikat(_) => (StatusCode::OK, true),
+    };
     Ok((
-        StatusCode::CREATED,
+        status,
         Json(AksiHasil {
             id: req.uuid.to_string(),
-            duplikat: false,
+            duplikat,
         }),
     )
         .into_response())
 }
 
 async fn sisa_grade(
-    conn: &mut sqlx::PgConnection,
+    conn: &mut PgConnection,
     lot_id: Uuid,
     grade: Grade,
     lot: &crate::lot::LotRow,
