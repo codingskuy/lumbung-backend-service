@@ -526,7 +526,9 @@ paths:
       tags: [Petani]
       operationId: papanHargaPetani
       summary: Papan harga minggu berjalan (baca saja)
-      description: Petani tidak dapat mengubah harga. Perlu login (bearer); cache hanya privat (`Cache-Control: private, max-age=900`). `404` bila papan minggu berjalan belum terbit.
+      description: |
+        Petani tidak dapat mengubah harga. Perlu login (bearer); cache hanya privat
+        (`Cache-Control: private, max-age=900`). `404` bila papan minggu berjalan belum terbit.
       parameters:
         - $ref: '#/components/parameters/PerangkatId'
       responses:
