@@ -27,3 +27,7 @@ sqlx-data.json.bak
 
 # Graf pengetahuan graphify (artefak lokal, dibangkitkan ulang)
 graphify-out/
+
+# Artefak uji kontrak lokal
+.schemathesis/
+contract/laporan/

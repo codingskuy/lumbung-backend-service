@@ -1,0 +1,5 @@
+# Konfigurasi Schemathesis 4.x untuk backend Lumbung (LMB-BE-TEST-SCHEMATHESIS).
+
+[generation]
+allow-x00 = false
+codec = "utf-8"
