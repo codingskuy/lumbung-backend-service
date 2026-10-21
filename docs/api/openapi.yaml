@@ -512,8 +512,8 @@ paths:
       operationId: pembayaranSaya
       summary: Riwayat pembayaran H+1 petani
       description: |
-        Pembayaran dihitung dari berat bersih per grade x harga papan minggu berjalan (Grade A harga papan A,
-        Grade B harga papan B yang sudah memuat faktor 85 persen; Grade C tidak dibayar); target ketepatan minimal
+        Pembayaran dihitung dari berat bersih per grade x harga papan minggu berjalan (Grade A 100 persen harga papan,
+        Grade B 85 persen harga papan Grade A, dibulatkan setengah naik per grade; Grade C ditolak/tidak dibayar); target ketepatan minimal
         95% lot per minggu. Dibuat saat sortir dicatat, jatuh tempo H+1 (tanggal WIB). Denda Lumbung 0,5 persen
         per hari keterlambatan, maksimal 5 persen, otomatis; status `TERLAMBAT` setelah jatuh tempo. Hanya peran
         `petani`; difilter server per id petani (akun peran = kode petani), parameter apa pun diabaikan. Lot yang
@@ -1141,7 +1141,7 @@ paths:
       summary: Tandai invoice lunas
       description: |
         Beraudit; mengembalikan `audit_id`. `{id}` adalah kode invoice `INV-YYYYMMDD-NNN` (tanggal terbit).
-        Denda saat itu dibekukan. Sudah lunas `409`. Peran `admin_keuangan`, `admin_gudang`, atau `X-Service-Key`.
+        Denda saat itu dibekukan. Sudah lunas `409`. Hanya peran `admin_keuangan` atau `X-Service-Key` (hak tulis admin minimum, ADR-0006); `admin_gudang` dan peran lain `403`.
       security:
         - bearerAuth: []
         - serviceKey: []

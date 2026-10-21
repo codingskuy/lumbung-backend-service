@@ -15,5 +15,6 @@ Semua perubahan penting lumbung-backend-service dicatat di sini. Format mengikut
 - Fondasi AI-dev v1.0.0: `AGENTS.md`, `CLAUDE.md`, `docs/decisions/` (ADR-0001), `versions/v1.0.0/docs/40-TECHSTACK.md`, `versions/v1.0.0/docs/60-BLAST-RADIUS.md` (tiket LMB-BE-001, 2026-10-14).
 
 ### Diubah
+- Keputusan pemilik produk (ADR-0006): Grade B dibayar 85 persen harga papan (contoh L-8812 menjadi Rp3.524.850); `POST /admin/invoice/{id}/lunas` hanya `admin_keuangan` atau kunci layanan; `.env.example` dengan lima rahasia tanpa nilai; uji skema memastikan berat gram integer (tanpa NUMERIC kg).
 - Pemeriksaan peran kini dilakukan sebelum badan permintaan dibaca (ekstraktor `OperatorGudang`, `PeranSopir`, `AdminGudangAkses`): peran salah selalu 403, bukan 422. Fitur `multipart` pada `axum` diaktifkan untuk unggah foto.
 - Konfigurasi baru `JWT_ED25519_PUBLIC` (PEM SPKI) wajib; `JWT_ED25519_PRIVATE` kini PEM PKCS#8 ed25519. Server lokal OpenAPI menjadi `http://localhost:8080/v1`. Detail galat internal tidak lagi dikirim ke klien (hanya `galat internal`).
